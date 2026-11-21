@@ -36,6 +36,7 @@ public static class RuleBasedInterpreter
         "investigate", "look into", "assess", "evaluate", "review", "analyze", "analyse", "verify", "test", "negotiate", "report back",
         "find out", "figure out", "come back", "pilot", "proof of concept", "poc", "audit", "examine", "study", "explore", "check",
         "validate", "dig into", "work out", "own this", "your responsibility", "take this", "handle",
+        "assessment", "analysis", "evaluation", "recommendation", "give me", "send me", "bring me", "put together", "prepare",
     };
 
     public static InterpretedIntent Interpret(GameState s, string text, ExecRole defaultAddressee = ExecRole.None, string? focusProposalId = null)
@@ -86,8 +87,11 @@ public static class RuleBasedInterpreter
             }
         }
 
-        bool question = raw.EndsWith('?') || Regex.IsMatch(t, @"^\s*(what|how|why|when|where|who|which)\b")
-                        || Regex.IsMatch(t, @"^\s*(can|could|should|would|is|are|do|does|did|will|have|has) (we|you|i|it|there|they|our|the \w+ (be|have))\b");
+        // Strip a leading vocative ("Dr. Adeyemi, ...", "CIO: ...") before judging sentence form.
+        string tv = " " + Regex.Replace(t, @"^\s*[a-z.\s]{2,30}?[,:]\s+", "") .TrimStart();
+        bool politeRequest = Regex.IsMatch(tv, @"^\s*(can|could|would|will) you\b|\bplease\b");
+        bool question = !politeRequest && (raw.EndsWith('?') || Regex.IsMatch(tv, @"^\s*(what|how|why|when|where|who|which)\b")
+                        || Regex.IsMatch(tv, @"^\s*(can|could|should|would|is|are|do|does|did|will|have|has) (we|you|i|it|there|they|our|the \w+ (be|have))\b"));
 
         // 2. Approve / reject / defer a proposal.
         bool approveVerb = Regex.IsMatch(t, @"\b(approve|approved|approving|authori[sz]e|green[- ]?light|sign off on|go ahead with|move forward with|proceed with|fund the|let's do|lets do|i'm approving|we'll go with|go with)\b");
@@ -113,10 +117,12 @@ public static class RuleBasedInterpreter
         // 3. Budget reduction.
         if (Regex.IsMatch(t, @"\b(cut|reduce|trim|slash|take out|remove|save|find savings|savings of)\b") && money.Count > 0 && !question)
         {
-            var line = FindBudgetLine(s, t);
+            var lines = BudgetLineMentions(s, t);
+            var line = lines.Count == 0 ? null : lines.OrderBy(l => Math.Abs(l.Index - money[0].Index)).First().LineId;
             intent.Kind = IntentKind.Action;
             intent.Topic = Topics.Budget;
             if (line == null) { intent.Clarification = "Which budget line — consulting, training, travel, software, hardware maintenance or cloud?"; return intent; }
+            if (lines.Count > 1 || money.Count > 1) intent.Notes.Add("One reduction per decision: only the first was taken up. Raise the others separately.");
             bool oneTime = TextParsing.ContainsAny(t, "one-time", "one time", "this year only", "this fiscal year only", "temporar");
             intent.Action = new ActionProposal("reduce_budget", new JsonObject
             {
@@ -125,10 +131,13 @@ public static class RuleBasedInterpreter
             return intent;
         }
 
+        // Demands for reward and self-praise are claims about the player, never work requests.
+        if (intent.Conduct.HasFlag(ConductFlags.SelfPraise) || intent.Conduct.HasFlag(ConductFlags.DemandsReward)) { intent.Kind = IntentKind.Claim; intent.Topic = Topics.Performance; return intent; }
+
         // 4. Delegation / request for assessment.
         bool delegateVerb = DelegateVerbs.Any(v => Regex.IsMatch(t, $@"\b{Regex.Escape(v)}\b")) || Regex.IsMatch(t, @"\b(have|ask|get|tell|task|assign|want) (the |our )?\w+ (to )?");
         var target = DelegationTarget(s, t, mentioned, intent.AddressedRole);
-        if (delegateVerb && target != ExecRole.None && !(question && !Regex.IsMatch(t, @"^\s*(can|could|would) you")))
+        if (delegateVerb && target != ExecRole.None && !question)
         {
             var type = TaskTypeFrom(t, intent.Topic);
             string subject = SubjectFor(s, raw, type, money);
@@ -236,8 +245,24 @@ public static class RuleBasedInterpreter
                 return type == TaskType.Investigate || TextParsing.ContainsAny(raw.ToLowerInvariant(), "alternative")
                     ? $"Evaluate alternatives to {p.Title.ToLowerInvariant()}" : $"{TaskTypes.Label(type)}: {p.Title}";
         }
-        string cleaned = Regex.Replace(raw, @"\s+", " ").Trim();
-        return SimulationEngine.Truncate(cleaned, 180);
+        return CleanSubject(s, raw, type);
+    }
+
+    /// <summary>Turns "Priya, verify our backups actually restore. You have 10 days." into "Verify our backups actually restore".</summary>
+    public static string CleanSubject(GameState s, string raw, TaskType type)
+    {
+        string x = Regex.Replace(raw, @"\s+", " ").Trim();
+        x = Regex.Replace(x, @"^[^,:]{2,30}[,:]\s+", "");                                   // vocative
+        x = Regex.Replace(x, @"(?i)\b(this is your responsibility|it's yours|you own this)[.!]?\s*", "");
+        var sentences = Regex.Split(x, @"(?<=[.!?])\s+").Where(sn => TextParsing.DurationsDays(sn.ToLowerInvariant()).Count == 0 || sn.Split(' ').Length > 8).ToList();
+        x = sentences.Count > 0 ? string.Join(" ", sentences) : x;
+        x = Regex.Replace(x, @"(?i)^(please |i want you to |i need you to |i'd like you to |could you |can you |would you )", "");
+        x = Regex.Replace(x, @"(?i)^(have|ask|get|tell|task) (the |our )?\S+ (to )?", "");
+        x = Regex.Replace(x, @"(?i)\b(within|in|by|over) (the next )?(\d+|one|two|three|four|five|six|a|a couple of|a few) (business )?(day|week|month)s?\b", "");
+        x = Regex.Replace(x, @"(?i),?\s*and report back\b|\breport back\b", "");
+        x = x.Trim(' ', '.', ',', '?', '!');
+        if (x.Length < 6) x = TaskTypes.Label(type);
+        return char.ToUpperInvariant(x[0]) + SimulationEngine.Truncate(x[1..], 140);
     }
 
     private static decimal? AuthorizedBudget(string t, List<TextParsing.MoneyMention> money)
@@ -249,6 +274,18 @@ public static class RuleBasedInterpreter
             if (Regex.IsMatch(before, @"(budget of|up to|spend up to|authori[sz]e|allocate|with a budget|give (him|her|them|you) |you can spend|you have)\s*\$?\s*$")) return m.Amount;
         }
         return null;
+    }
+
+    public static List<(string LineId, int Index)> BudgetLineMentions(GameState s, string t)
+    {
+        var found = new List<(string, int)>();
+        var tech = s.Departments.FirstOrDefault(d => d.Id == s.Player.DepartmentId);
+        foreach (var l in tech?.BudgetLines ?? new())
+        {
+            int idx = l.Keywords.Select(k => t.IndexOf(k, StringComparison.Ordinal)).Where(i => i >= 0).DefaultIfEmpty(-1).Min();
+            if (idx >= 0) found.Add((l.Id, idx));
+        }
+        return found.OrderBy(f => f.Item2).ToList();
     }
 
     public static string? FindBudgetLine(GameState s, string t)

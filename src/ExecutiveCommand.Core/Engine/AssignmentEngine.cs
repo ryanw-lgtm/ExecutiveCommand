@@ -19,11 +19,7 @@ public static class AssignmentEngine
             var exec = s.Exec(a.Assignee);
             if (workday)
             {
-                double rate = (0.5 + exec.Competence / 100.0) * (1.25 - exec.Workload / 100.0);
-                rate = Math.Clamp(rate, 0.3, 1.6);
-                rate *= 1 + Math.Min(0.4, (double)a.AuthorizedBudget / 150_000.0);
-                if (!a.IsRequest) rate *= ProjectEngine.ConsultingCapacity(s);
-                rate *= 0.85 + e.Rng.NextDouble() * 0.3;
+                double rate = ExpectedDailyRate(s, exec, a.AuthorizedBudget, a.IsRequest) * (0.85 + e.Rng.NextDouble() * 0.3);
                 a.EffortDone += rate;
                 if (a.AuthorizedBudget > 0)
                     a.Spent = Math.Min(a.AuthorizedBudget, Math.Round(a.AuthorizedBudget * (decimal)Math.Min(1, a.EffortDone / a.EffortRequired), 2));
@@ -45,6 +41,21 @@ public static class AssignmentEngine
     }
 
     private static string TaskTypesLabel(TaskType t) => TaskTypes.Label(t);
+
+    /// <summary>Work-days of effort an executive completes per workday. Shared by the engine and by the
+    /// executive's own estimate, so "that timeline is workable" means what the simulation will do.</summary>
+    public static double ExpectedDailyRate(GameState s, Executive exec, decimal budget, bool isRequest, double extraWorkload = 0)
+    {
+        double rate = (0.5 + exec.Competence / 100.0) * (1.25 - Math.Min(100, exec.Workload + extraWorkload) / 100.0);
+        rate = Math.Clamp(rate, 0.3, 1.6);
+        rate *= 1 + Math.Min(0.4, (double)budget / 150_000.0);
+        if (!isRequest) rate *= ProjectEngine.ConsultingCapacity(s);
+        return rate;
+    }
+
+    /// <summary>Calendar days an executive expects a task to take (mean effort, no luck).</summary>
+    public static int EstimatedCalendarDays(GameState s, Executive exec, TaskType type, decimal budget, bool isRequest) =>
+        (int)Math.Ceiling(TaskTypes.BaseEffort(type) * 1.05 / ExpectedDailyRate(s, exec, budget, isRequest, extraWorkload: isRequest ? 5 : 8) * 7 / 5.0);
 
     private static void Complete(SimulationEngine e, Assignment a, Executive exec)
     {

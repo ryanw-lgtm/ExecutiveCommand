@@ -149,11 +149,12 @@ public static class StanceEngine
     public static Stance OnDelegation(GameState s, Executive x, TaskType type, int deadlineDays, decimal budget)
     {
         var st = new Stance { Role = x.Role };
-        double needDays = TaskTypes.BaseEffort(type) * 7 / 5.0 * (1.25 - x.Workload / 100.0 < 0.6 ? 1.4 : 1.0);
+        double needDays = AssignmentEngine.EstimatedCalendarDays(s, x, type, budget, isRequest: x.ReportsTo != s.Player.Role);
         st.Facts.Add($"Deadline: {deadlineDays} days; current workload {(x.Workload > 75 ? "very high" : x.Workload > 55 ? "high" : "manageable")}");
         if (budget > 0) st.Facts.Add($"Authorized consulting budget: {M(budget)}");
         st.Score = 0.4 + (deadlineDays >= needDays ? 0.2 : -0.5) - Math.Max(0, (x.Workload - 70) / 60.0);
-        if (deadlineDays < needDays) { st.Reasons.Add($"{deadlineDays} days is tight for a proper {TaskTypes.Label(type)}."); st.Conditions.Add("more time or contractor support"); }
+        if (deadlineDays < needDays * 0.85) { st.Reasons.Add($"Realistically a proper {TaskTypes.Label(type)} takes me about {needDays:0} days with everything else on my plate; {deadlineDays} won't be enough."); st.Conditions.Add("more time, contractor support, or something taken off my plate"); }
+        else if (deadlineDays < needDays * 1.1) st.Reasons.Add($"That's tight — I'd estimate about {needDays:0} days. I'll push, but I can't promise it.");
         else st.Reasons.Add("That timeline is workable.");
         if (x.Workload > 75) st.Reasons.Add("I'll have to move other work to fit this in.");
         if (x.Biases.Contains("vendor-led") && type == TaskType.CostReview) st.Reasons.Add("I'll bring in the vendor's specialists to help.");

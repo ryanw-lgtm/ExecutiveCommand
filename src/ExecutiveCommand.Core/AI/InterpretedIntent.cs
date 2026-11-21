@@ -27,4 +27,6 @@ public sealed class InterpretedIntent
     public ConductFlags Conduct { get; set; }
     public string Source { get; set; } = "rules";
     public string? ProposalFocusId { get; set; }
+    /// <summary>Notes for the player about how their words were interpreted.</summary>
+    public List<string> Notes { get; } = new();
 }

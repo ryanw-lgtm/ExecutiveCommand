@@ -90,6 +90,7 @@ public sealed class MeetingService
             else resp.SystemNotes.Add("Local AI interpretation unavailable; used rule-based interpretation.");
         }
         resp.Intent = intent;
+        resp.SystemNotes.AddRange(intent.Notes);
         if (intent.ProposalFocusId != null) _focusProposalId = intent.ProposalFocusId;
 
         var responder = PickResponder(intent);
@@ -229,6 +230,8 @@ public sealed class MeetingService
             case "reduce_budget":
                 var line = ReduceBudgetHandler.FindLine(S, a.Str("budget_line"), out _);
                 return line == null ? null : StanceEngine.OnBudgetCut(S, x, line, a.Money("annual_amount") ?? 0);
+            case "request_assessment" when Roles.Parse(a.Str("from_role")) == x.Role:
+                return StanceEngine.OnDelegation(S, x, TaskTypesPublic.Parse(a.Str("task_type")), (int)(a.Int("deadline_days") ?? 14), 0);
             case "delegate_assignment" when Roles.Parse(a.Str("assignee_role")) == x.Role:
                 return StanceEngine.OnDelegation(S, x, TaskTypesPublic.Parse(a.Str("task_type")), (int)(a.Int("deadline_days") ?? 14), a.Money("authorized_budget") ?? 0);
             case "incident_response" when IncidentResponseHandler.Find(S, a) is { } inc:

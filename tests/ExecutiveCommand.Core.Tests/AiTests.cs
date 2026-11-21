@@ -53,6 +53,53 @@ public class InterpreterTests
     }
 
     [Fact]
+    public void CompoundCutTakesTheLineNearestTheFirstAmount()
+    {
+        var i = RuleBasedInterpreter.Interpret(NewGame().State, "Cut $250k from travel and $150k from consulting, permanently.");
+        Assert.Equal("travel", i.Action!.Str("budget_line"));
+        Assert.Equal(250_000m, i.Action.Money("annual_amount"));
+        Assert.NotEmpty(i.Notes);
+    }
+
+    [Fact]
+    public void PoliteRequestToPeerIsARequestNotAQuestion()
+    {
+        var i = RuleBasedInterpreter.Interpret(NewGame().State, "Dr. Adeyemi, could you give me a clinical assessment of the disaster recovery options within two weeks?");
+        Assert.Equal("request_assessment", i.Action?.Name);
+        Assert.Equal(14, i.Action!.Int("deadline_days"));
+    }
+
+    [Fact]
+    public void SubjectsAreCleanedOfVocativesAndDeadlines()
+    {
+        var i = RuleBasedInterpreter.Interpret(NewGame().State, "Priya, verify our backups actually restore. You have 10 days.");
+        Assert.Equal("Verify our backups actually restore", i.Action!.Str("subject"));
+    }
+
+    [Fact]
+    public void ExecutiveEstimateMatchesEngineCapacity()
+    {
+        // An overloaded CIO told 3 weeks for an 8-day investigation must not call it "workable" and then miss it.
+        var e = NewGame();
+        var cio = e.State.Exec(ExecRole.CIO);
+        int est = AssignmentEngine.EstimatedCalendarDays(e.State, cio, Core.Model.TaskType.Investigate, 0, false);
+        var st = StanceEngine.OnDelegation(e.State, cio, Core.Model.TaskType.Investigate, 21, 0);
+        bool saysWorkable = st.Reasons[0].Contains("workable");
+        Assert.Equal(21 >= est * 1.1, saysWorkable);
+        // And the engine agrees with the estimate on average.
+        int late = 0;
+        for (ulong seed = 1; seed <= 20; seed++)
+        {
+            var g = NewGame(seed);
+            g.Submit(A("delegate_assignment", new { assignee_role = "CIO", task_type = "investigate", subject = "Identity alternatives", deadline_days = 21 }));
+            g.AdvanceDays(21);
+            if (g.State.Assignments[0].Status != Core.Model.AssignmentStatus.Completed) late++;
+        }
+        if (saysWorkable) Assert.True(late <= 6, $"{late}/20 late despite 'workable'");
+        else Assert.True(late >= 10, $"only {late}/20 late despite warning");
+    }
+
+    [Fact]
     public void BudgetCutIsParsed()
     {
         var i = RuleBasedInterpreter.Interpret(NewGame().State, "Cut $150k from travel, permanently.");

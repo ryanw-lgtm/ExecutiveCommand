@@ -80,6 +80,15 @@ public static class DialogueComposer
                     Position.Support => $"For what it's worth, I support this. {reasons}",
                     _ => reasons,
                 };
+            case ReplyKind.Answer when st != null && st.Reasons.Count > 0:
+                string lead = st.Position switch
+                {
+                    Position.Support => "I'm in favor.",
+                    Position.Oppose => "I'm against it.",
+                    Position.Concerned => "I have serious reservations.",
+                    _ => "I could get there, with conditions.",
+                };
+                return $"{lead} {reasons}{conditions}" + (st.Facts.Count > 0 ? $" For context: {st.Facts[0]}." : "");
             case ReplyKind.Answer:
                 if (c.Facts.Count == 0) return Pick("I don't have anything specific on that right now.", "Nothing new from my side on that.");
                 return Pick("Here's where things stand: ", "The short version: ", "From what I have: ") + string.Join(". ", c.Facts.Take(4)) + "." +
