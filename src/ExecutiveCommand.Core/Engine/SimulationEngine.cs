@@ -22,6 +22,7 @@ public sealed class SimulationEngine
         State = state;
         Registry = registry ?? ActionRegistry.CreateDefault();
         Rng = new DeterministicRng(state.RngState);
+        TextCulture.Apply();
     }
 
     private void CommitRng() => State.RngState = Rng.State;

@@ -25,7 +25,9 @@ public sealed class Stance
     internal void Finish()
     {
         Score = Math.Clamp(Score, -1, 1);
-        Position = Score > 0.25 ? Position.Support : Score > -0.1 ? Position.Conditional : Score > -0.35 ? Position.Concerned : Position.Oppose;
+        Position = Score > 0.25 ? Position.Support
+                 : Score > -0.1 ? (Math.Abs(Score) < 0.06 && Conditions.Count == 0 ? Position.Neutral : Position.Conditional)
+                 : Score > -0.35 ? Position.Concerned : Position.Oppose;
     }
 }
 
@@ -45,6 +47,8 @@ public static class StanceEngine
         bool isDr = p.EffectKey.StartsWith("dr_");
         var missing = p.RequiredEvidence.Where(r => !DecisionEvaluator.HasEvidence(s, p.Topic, r)).ToList();
         st.Facts.Add($"{p.Title}: {M(p.Capex)} capital, {M(p.AnnualOpex)} per year to operate, about {p.DurationDays} days to deliver");
+        var cheaper = s.Proposals.FirstOrDefault(a => a.SupersedesId == p.Id && a.Status is ProposalStatus.Pending or ProposalStatus.Deferred or ProposalStatus.AwaitingApproval);
+        if (cheaper != null) st.Facts.Add($"Alternative on the table: {cheaper.Title}, {M(cheaper.Capex)} capital");
         st.Facts.Add($"Technology capital remaining this fiscal year: {M(s.Finance.TechCapitalBudgetRemaining)}");
         if (isDr) st.Facts.Add($"Current documented recovery time: {t.ReportedRtoHours:0} hours vs {t.TargetRtoHours:0}-hour target");
 
@@ -59,6 +63,7 @@ public static class StanceEngine
                 if (evidence < 1 && missing.Count > 0) { st.Reasons.Add("I haven't seen analysis that supports the numbers."); st.Conditions.AddRange(missing.Select(EvidenceLabel)); }
                 if (isDr && drGap > 0.5) st.Reasons.Add($"I accept that a {t.ReportedRtoHours:0}-hour recovery time is an exposure we can't carry indefinitely.");
                 if (x.TrustInPlayer < 40) st.Reasons.Add("Frankly, recent approvals haven't delivered what was promised.");
+                if (cheaper != null) { st.Score -= 1.0; st.Reasons.Insert(0, $"Your own team found a {M(cheaper.Capex)} alternative that does the same job. I won't fund the {M(p.Capex)} version."); }
                 break;
             case ExecRole.CEO:
                 st.Score = 0.3 * drGap * (isDr ? 1 : 0) + 0.3 * evidence + 0.15 * (s.Metrics.BoardConfidence - 50) / 50 - 0.25 * Math.Min(1, (double)tco / 3_000_000)
@@ -68,6 +73,7 @@ public static class StanceEngine
                 if (p.ClinicallySignificant && !DecisionEvaluator.Consulted(s, ExecRole.CMO, p.Topic)) { st.Reasons.Add("I want our clinical leaders behind anything that touches patient care."); st.Conditions.Add("the CMO's view on clinical impact"); }
                 if (tco > 2_000_000m) st.Reasons.Add($"At roughly {M(tco)} over three years this is a board-level commitment.");
                 if (evidence < 0.5 && missing.Count > 0) st.Conditions.AddRange(missing.Select(EvidenceLabel));
+                if (cheaper != null) { st.Score -= 0.6; st.Reasons.Insert(0, "Why would we spend more when a cheaper option meets the need?"); }
                 break;
             case ExecRole.CIO:
                 st.Score = (p.Sponsor == x.Role ? 0.45 : 0) + (p.EffectKey is "dr_onprem" or "identity_expansion" ? 0.2 : 0) - 0.4 * Math.Max(0, (x.Workload - 60) / 40.0)
@@ -100,6 +106,7 @@ public static class StanceEngine
                 if (p.EffectKey is "dr_cloud" or "dr_hybrid") st.Reasons.Add("This moves us toward the target architecture rather than away from it.");
                 if (p.EffectKey == "dr_cloud" && t.CloudDrCertificationKnown == null) st.Conditions.Add("a proof of concept to confirm vendor support");
                 if (p.EffectKey == "identity_expansion") st.Reasons.Add("We'd be buying capacity to carry configuration debt.");
+                if (cheaper != null) st.Score -= 0.3;
                 break;
             case ExecRole.Vendor:
                 st.Score = p.EffectKey == "dr_cloud" ? (t.CloudDrVendorCertified ? 0.2 : -0.1) : 0.3;

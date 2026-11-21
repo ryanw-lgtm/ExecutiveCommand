@@ -87,6 +87,9 @@ public static class HealthcareCtoScenario
             },
         });
 
+        // July–December of the current fiscal year already happened under the previous CTO: on plan, slightly over.
+        foreach (var l in s.Departments[0].BudgetLines) l.ActualFiscalYtd = Math.Round(l.AnnualBudget / 2m * (l.Id == "personnel" ? 1m : 1.01m), 0);
+
         decimal existingAssets = 620_000_000m, existingDep = 310_000_000m;
         s.Finance = new FinancialState
         {

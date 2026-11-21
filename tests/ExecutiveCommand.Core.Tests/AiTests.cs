@@ -220,6 +220,19 @@ public class AntiManipulationTests
     }
 
     [Fact]
+    public void FindingACheaperAlternativeTurnsTheCfoAgainstTheExpensiveOption()
+    {
+        var e = NewGame(3);
+        var p = e.State.Proposals.First(x => x.Id == "PRP-ID");
+        e.Submit(A("delegate_assignment", new { assignee_role = "EADirector", task_type = "investigate", subject = "Identity alternatives", deadline_days = 45 }));
+        for (int i = 0; i < 60 && e.State.Proposals.All(x => x.EffectKey != "identity_optimization"); i++) e.AdvanceDays(1);
+        Assert.Contains(e.State.Proposals, x => x.EffectKey == "identity_optimization"); // seed 3 finds it
+        var cfo = StanceEngine.OnProposal(e.State, e.State.Exec(ExecRole.CFO), p);
+        Assert.Equal(Position.Oppose, cfo.Position);
+        Assert.Contains("alternative", cfo.Reasons[0]);
+    }
+
+    [Fact]
     public async Task FlatteryDoesNotChangeStance()
     {
         var e = NewGame();

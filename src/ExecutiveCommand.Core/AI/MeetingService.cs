@@ -152,7 +152,7 @@ public sealed class MeetingService
             await AddReplyAsync(resp, new ReplyContext { Exec = responder, Kind = ReplyKind.Statement, PlayerText = "Let's not proceed for now.", TurnNumber = _turn }, null, ct);
             return resp;
         }
-        return await ExecuteAsync(resp, action, text, responder, ct, confirmed: true);
+        return await ExecuteAsync(resp, action, text, responder, ct, confirmed: true, interject: false); // views were already voiced
     }
 
     private async Task<MeetingResponse> HandleActionAsync(MeetingResponse resp, InterpretedIntent intent, string text, Executive responder, CancellationToken ct)
@@ -192,7 +192,7 @@ public sealed class MeetingService
         }
     }
 
-    private async Task<MeetingResponse> ExecuteAsync(MeetingResponse resp, ActionProposal action, string text, Executive subject, CancellationToken ct, bool confirmed)
+    private async Task<MeetingResponse> ExecuteAsync(MeetingResponse resp, ActionProposal action, string text, Executive subject, CancellationToken ct, bool confirmed, bool interject = true)
     {
         // Stance is computed before execution so it reflects the situation the decision was made in.
         var stance = DecisionStance(subject, action);
@@ -213,7 +213,7 @@ public sealed class MeetingService
             Topic = _engine.Registry.Get(action.Name)!.TopicOf(S, action), EngineResult = new List<string> { outcome.Summary }.Concat(outcome.Effects).ToList(),
             Facts = ContextBuilder.Facts(S, subject, _engine.Registry.Get(action.Name)!.TopicOf(S, action)), TurnNumber = _turn,
         }, declined ? null : stance, ct);
-        if (!declined) await MaybeInterjectAsync(resp, subject, o => DecisionStance(o, action), text, Topics.General, ct);
+        if (!declined && interject) await MaybeInterjectAsync(resp, subject, o => DecisionStance(o, action), text, Topics.General, ct);
         return resp;
     }
 

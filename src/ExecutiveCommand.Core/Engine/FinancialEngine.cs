@@ -39,13 +39,13 @@ public static class FinancialEngine
         }
 
         // Revenue (patient service revenue with mild variance) less revenue lost to incidents.
-        decimal revenue = f.MonthlyRevenueBase * (decimal)(1 + e.Rng.NextGaussian(0, 0.012));
+        decimal revenue = f.MonthlyRevenueBase * (decimal)(1 + e.Rng.NextGaussian(0, 0.006));
         Book(LedgerCategory.Revenue, revenue, "Net patient service revenue", "Monthly revenue");
         if (f.PendingRevenueLoss > 0) { Book(LedgerCategory.Revenue, -f.PendingRevenueLoss, "Net patient service revenue", "Revenue lost to downtime"); }
         decimal lost = f.PendingRevenueLoss;
         f.PendingRevenueLoss = 0;
 
-        Book(LedgerCategory.Opex, f.MonthlyOtherOpex * (decimal)(1 + e.Rng.NextGaussian(0, 0.008)), "Clinical & administrative operations", "Non-technology operating costs");
+        Book(LedgerCategory.Opex, f.MonthlyOtherOpex * (decimal)(1 + e.Rng.NextGaussian(0, 0.005)), "Clinical & administrative operations", "Non-technology operating costs");
 
         // Technology department, line by line.
         var tech = s.Departments.First(d => d.Id == s.Player.DepartmentId);
@@ -125,9 +125,17 @@ public static class FinancialEngine
     public static decimal TechBudgetYtd(GameState s)
     {
         var tech = s.Departments.First(d => d.Id == s.Player.DepartmentId);
+        return tech.BudgetLines.Sum(l => l.AnnualBudget) / 12m * FiscalMonthsClosed(s);
+    }
+
+    /// <summary>Months of the current fiscal year that have been closed (including those before the game began).</summary>
+    public static int FiscalMonthsClosed(GameState s)
+    {
         var fyStart = FiscalYearStart(s, s.CurrentDate);
-        int monthsClosed = s.Finance.Statements.Count(m => new DateOnly(m.Year, m.Month, 1) >= fyStart);
-        return tech.BudgetLines.Sum(l => l.AnnualBudget) / 12m * monthsClosed;
+        var last = s.Finance.Statements.LastOrDefault();
+        var lastClosed = last != null ? new DateOnly(last.Year, last.Month, 1) : new DateOnly(s.StartDate.Year, s.StartDate.Month, 1).AddMonths(-1);
+        int months = (lastClosed.Year * 12 + lastClosed.Month) - (fyStart.Year * 12 + fyStart.Month) + 1;
+        return Math.Max(0, months);
     }
 
     public static void AssertReconciles(GameState s)
