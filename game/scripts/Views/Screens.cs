@@ -141,7 +141,12 @@ public partial class SettingsScreen : Control
         foreach (var f in new[] { 0.9f, 1.0f, 1.1f, 1.25f, 1.5f }) scale.AddItem($"{f:P0} interface scale");
         scale.Selected = Array.IndexOf(new[] { 0.9f, 1.0f, 1.1f, 1.25f, 1.5f }, st.UiScale) is var i && i >= 0 ? i : 1;
         var autosave = new CheckBox { Text = "Autosave after each time advance", ButtonPressed = st.Autosave };
-        disp.AddChild(full); disp.AddChild(scale); disp.AddChild(autosave);
+        var pacing = new OptionButton();
+        pacing.AddItem("Executive replies: instant", 0);
+        pacing.AddItem("Executive replies: quick typing", 1);
+        pacing.AddItem("Executive replies: natural typing (each executive at their own pace)", 2);
+        pacing.Selected = Math.Clamp(st.ReplyPacing, 0, 2);
+        disp.AddChild(full); disp.AddChild(scale); disp.AddChild(pacing); disp.AddChild(autosave);
         col.AddChild(Ui.Card(disp));
 
         col.AddChild(Ui.Card(Ui.VBox(6, Ui.Caption("Privacy"),
@@ -155,7 +160,7 @@ public partial class SettingsScreen : Control
                 st.AiEnabled = enabled.ButtonPressed;
                 st.ModelPath = model.Selected <= 0 ? "" : models[model.Selected - 1];
                 st.Threads = (int)threads.Value; st.GpuLayers = (int)gpu.Value; st.ContextSize = (int)ctx.Value;
-                st.Fullscreen = full.ButtonPressed; st.UiScale = new[] { 0.9f, 1.0f, 1.1f, 1.25f, 1.5f }[scale.Selected]; st.Autosave = autosave.ButtonPressed;
+                st.Fullscreen = full.ButtonPressed; st.UiScale = new[] { 0.9f, 1.0f, 1.1f, 1.25f, 1.5f }[scale.Selected]; st.Autosave = autosave.ButtonPressed; st.ReplyPacing = pacing.Selected;
                 main.Session.SaveSettings();
                 main.ApplyDisplaySettings();
                 _status.Text = "Starting local AI…";

@@ -47,6 +47,20 @@ public static class SmokeTest
             var first = await game.Meeting.SayForTest(ideas[0].Text);
             game.Meeting.RenderForTest(first);
             Check(first.Outcome?.Executed == true, $"suggestion '{ideas[0].Text}' executes");
+            // Paced replies: the typing indicator appears, then the reply lands in the transcript.
+            main.Session.Settings.ReplyPacing = 1;
+            game.OpenMeeting(new[] { Core.Model.ExecRole.CFO, Core.Model.ExecRole.CEO }, null); await Frames();
+            var paced = game.Meeting.SendForTest("Raymond, how are we tracking against the savings target?");
+            bool sawTyping = false;
+            for (int i = 0; i < 200 && !paced.IsCompleted; i++)
+            {
+                await Frames(1);
+                if (game.Meeting.TypingVisible && !sawTyping) { sawTyping = true; await Shot("03d_typing"); }
+            }
+            await paced;
+            Check(sawTyping, "typing indicator shown");
+            Check(game.Meeting.LogText.Contains("Raymond Castellano"), "paced reply delivered");
+            main.Session.Settings.ReplyPacing = 0;
             game.OpenInbox(main.Session.State.Inbox[0].Id); await Frames();
             Check(true, "inbox jump");
 

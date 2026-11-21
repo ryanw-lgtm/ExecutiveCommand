@@ -1,5 +1,10 @@
 # Development log
 
+## 2026-11-21 — Iteration 3: executive typing times
+- Replies in the meeting room now arrive one at a time with a "<name> is typing…" indicator. Each executive has their own pace (`Core/AI/TypingPace.cs`): decisive people answer sooner, cautious ones (e.g. the CFO, CMO) pause before replying, overloaded people are slower, and longer answers take longer.
+- **Skip** button reveals everything at once; Settings offers instant / quick / natural pacing (default natural). Purely presentational — no effect on game state.
+- Verified: 63/63 tests; smoke test checks the typing indicator appears and the reply is delivered.
+
 ## 2026-11-21 — Iteration 2: usability pass
 
 ### Changed

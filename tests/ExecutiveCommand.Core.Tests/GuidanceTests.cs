@@ -70,3 +70,21 @@ public class GuidanceTests(ITestOutputHelper output)
             }
     }
 }
+
+public class TypingPaceTests
+{
+    [Fact]
+    public void PacingReflectsPersonalityAndLengthAndCanBeTurnedOff()
+    {
+        var s = NewGame().State;
+        string text = new('x', 120);
+        var cfo = TypingPace.For(s.Exec(ExecRole.CFO), text, ReplyPacing.Natural);   // cautious: longer pause
+        var ea = TypingPace.For(s.Exec(ExecRole.EADirector), text, ReplyPacing.Natural); // risk-tolerant
+        Assert.True(cfo.ThinkSeconds > ea.ThinkSeconds);
+        Assert.True(TypingPace.For(s.Exec(ExecRole.CEO), new string('x', 300), ReplyPacing.Natural).TypeSeconds
+                    > TypingPace.For(s.Exec(ExecRole.CEO), "Agreed.", ReplyPacing.Natural).TypeSeconds);
+        Assert.True(TypingPace.For(s.Exec(ExecRole.CFO), text, ReplyPacing.Fast).Total < cfo.Total / 2);
+        Assert.Equal(0, TypingPace.For(s.Exec(ExecRole.CFO), text, ReplyPacing.Off).Total);
+        foreach (var x in s.Executives) Assert.InRange(TypingPace.For(x, new string('x', 2000), ReplyPacing.Natural).Total, 0.8, 7.0);
+    }
+}

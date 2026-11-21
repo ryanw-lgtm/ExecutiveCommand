@@ -20,6 +20,8 @@ public sealed class PlayerSettings
     public float UiScale { get; set; } = 1.0f;
     public bool Autosave { get; set; } = true;
     public bool SeenWelcome { get; set; }
+    /// <summary>0 = off, 1 = fast, 2 = natural (see Core.AI.ReplyPacing).</summary>
+    public int ReplyPacing { get; set; } = 2;
 }
 
 /// <summary>

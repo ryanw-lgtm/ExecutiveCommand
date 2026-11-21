@@ -65,6 +65,14 @@ public partial class MeetingView : VBoxContainer, IGameView
         _log.AddThemeFontSizeOverride("bold_font_size", 16);
         AddChild(_log);
 
+        // "Raymond is typing…" — replies arrive one at a time at each executive's own pace.
+        _typing = Ui.Label("", 14, Palette.Muted);
+        _skip = Ui.Button("Skip", () => _skipRequested = true);
+        _skip.TooltipText = "Show all replies now. Reply pacing can be changed in Settings.";
+        _typingRow = Ui.HBox(10, _typing, Ui.Spacer(), _skip);
+        _typingRow.Visible = false;
+        AddChild(_typingRow);
+
         _confirmText = Ui.Label("", 15, Palette.Warn, wrap: true);
         _confirmBar = Ui.HBox(10, _confirmText, Ui.Button("Cancel", () => _ = Confirm(false)), Ui.Button("Confirm decision", () => _ = Confirm(true), primary: true));
         _confirmCard = Ui.Card(_confirmBar, Palette.SurfaceRaised, Palette.Warn);
@@ -98,6 +106,51 @@ public partial class MeetingView : VBoxContainer, IGameView
     };
 
     private HFlowContainer _ideas = null!;
+    private Label _typing = null!;
+    private Button _skip = null!;
+    private HBoxContainer _typingRow = null!;
+    private bool _skipRequested;
+    private string _typingName = "";
+    private double _dotClock;
+
+    public override void _Process(double delta)
+    {
+        if (!_typingRow.Visible) return;
+        _dotClock += delta;
+        int dots = (int)(_dotClock * 3) % 4;
+        _typing.Text = $"{_typingName} is typing{new string('.', dots)}";
+    }
+
+    private async Task WaitAsync(double seconds)
+    {
+        double end = Time.GetTicksMsec() / 1000.0 + seconds;
+        while (!_skipRequested && Time.GetTicksMsec() / 1000.0 < end && IsInsideTree())
+            await ToSignal(GetTree().CreateTimer(0.05), SceneTreeTimer.SignalName.Timeout);
+    }
+
+    /// <summary>Reveal replies one by one with a typing indicator, then the recorded outcome.</summary>
+    private async Task RenderAsync(MeetingResponse r)
+    {
+        var pacing = (ReplyPacing)_game.Session.Settings.ReplyPacing;
+        _skipRequested = false;
+        var s = _game.Session.State;
+        foreach (var reply in r.Replies)
+        {
+            if (pacing != ReplyPacing.Off && !_skipRequested && IsInsideTree() && s.TryExec(reply.Speaker) is { } x)
+            {
+                var t = TypingPace.For(x, reply.Text, pacing);
+                _typingName = reply.Name.StartsWith("Dr. ") ? "Dr. " + reply.Name.Split(' ')[^1] : reply.Name.Split(' ')[0];
+                _dotClock = 0;
+                await WaitAsync(t.ThinkSeconds);          // thinking: no indicator yet
+                _typingRow.Visible = true;
+                await WaitAsync(t.TypeSeconds);           // typing
+                _typingRow.Visible = false;
+            }
+            AppendReply(reply);
+        }
+        _typingRow.Visible = false;
+        AppendOutcome(r);
+    }
 
     /// <summary>Open a meeting with specific people, optionally with a sentence ready to send.</summary>
     public void OpenWith(IEnumerable<ExecRole> roles, string? prefill)
@@ -173,7 +226,7 @@ public partial class MeetingView : VBoxContainer, IGameView
         try
         {
             var r = await call(_cts.Token);
-            Render(r);
+            await RenderAsync(r);
         }
         catch (Exception e)
         {
@@ -201,7 +254,12 @@ public partial class MeetingView : VBoxContainer, IGameView
 
     private void Render(MeetingResponse r)
     {
-        foreach (var reply in r.Replies)
+        foreach (var reply in r.Replies) AppendReply(reply);
+        AppendOutcome(r);
+    }
+
+    private void AppendReply(MeetingReply reply)
+    {
         {
             string pos = reply.Position switch
             {
@@ -214,6 +272,10 @@ public partial class MeetingView : VBoxContainer, IGameView
             string tag = reply.AiGenerated ? $" [color={Palette.Hex(Palette.Muted)}][font_size=11]AI[/font_size][/color]" : "";
             _log.AppendText($"[b]{Ui.Esc(reply.Name)}[/b] [color={Palette.Hex(Palette.Muted)}]({Roles.Label(reply.Speaker)})[/color]{pos}{tag}\n{Ui.Esc(reply.Text)}\n\n");
         }
+    }
+
+    private void AppendOutcome(MeetingResponse r)
+    {
         var muted = Palette.Hex(Palette.Muted);
         if (r.Intent?.Action is { } a && r.Outcome == null && r.ConfirmationPrompt == null)
             _log.AppendText($"[color={muted}][i]Interpreted as {a.Name.Replace('_', ' ')} — not carried out.[/i][/color]\n");
@@ -228,6 +290,11 @@ public partial class MeetingView : VBoxContainer, IGameView
         foreach (var n in r.SystemNotes.Where(n => r.Outcome == null || (n != r.Outcome.Summary && !r.Outcome.Effects.Contains(n))))
             _log.AppendText($"[color={muted}][i]{Ui.Esc(n)}[/i][/color]\n");
     }
+
+    /// <summary>Used by the smoke test: goes through the real input → paced rendering path.</summary>
+    public Task SendForTest(string text) { _input.Text = text; return Send(); }
+    public bool TypingVisible => _typingRow.Visible;
+    public string LogText => _log.GetParsedText();
 
     /// <summary>Used by the smoke test.</summary>
     public Task<MeetingResponse> SayForTest(string text) => _meeting!.SayAsync(text);
