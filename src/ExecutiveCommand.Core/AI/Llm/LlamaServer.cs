@@ -148,7 +148,7 @@ public sealed class LlamaServerModel : ILanguageModel, IDisposable
 
     public Task<string?> CompleteJsonAsync(IReadOnlyList<ChatMessage> messages, JsonObject schema, CancellationToken ct) =>
         ChatAsync(messages, new JsonObject { ["type"] = "json_schema", ["json_schema"] = new JsonObject { ["name"] = "interpretation", ["schema"] = schema.DeepClone() } },
-            temperature: 0.1, maxTokens: 300, _settings.InterpretTimeoutSeconds, ct);
+            temperature: 0.1, maxTokens: 1024, _settings.InterpretTimeoutSeconds, ct);
 
     public Task<string?> CompleteTextAsync(IReadOnlyList<ChatMessage> messages, CancellationToken ct) =>
         ChatAsync(messages, null, _settings.DialogueTemperature, _settings.MaxDialogueTokens, _settings.DialogueTimeoutSeconds, ct);
@@ -173,7 +173,10 @@ public sealed class LlamaServerModel : ILanguageModel, IDisposable
             using var resp = await _http.PostAsync($"http://127.0.0.1:{_port}/v1/chat/completions", content, cts.Token);
             if (!resp.IsSuccessStatusCode) { LastError = $"Inference HTTP {(int)resp.StatusCode}"; return null; }
             var json = await resp.Content.ReadFromJsonAsync<JsonObject>(cancellationToken: cts.Token);
-            return json?["choices"]?[0]?["message"]?["content"]?.GetValue<string>();
+            var choice = json?["choices"]?[0];
+            // Output cut off by the token limit is incomplete: for JSON it is invalid, for speech it ends mid-sentence.
+            if (responseFormat != null && choice?["finish_reason"]?.GetValue<string>() == "length") { LastError = "Structured output truncated."; return null; }
+            return choice?["message"]?["content"]?.GetValue<string>();
         }
         catch (OperationCanceledException) { LastError = ct.IsCancellationRequested ? "Cancelled." : "Timed out."; return null; }
         catch (Exception ex) when (ex is HttpRequestException or JsonException or InvalidOperationException) { LastError = ex.Message; return null; }

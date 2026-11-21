@@ -41,6 +41,7 @@ public static partial class ResponseValidator
         if (text.Length < 2) return new(false, "", "too short");
         if (text.Length > 900) text = TrimToSentence(text, 900);
         string lower = text.ToLowerInvariant();
+        if (!LooksLikeEnglishSpeech(text)) return new(false, "", "implausible text (model may be broken or misconfigured)");
         if (BreaksCharacter.Any(lower.Contains)) return new(false, "", "breaks character");
         if (text.Contains('{') && text.Contains('}')) return new(false, "", "structured output in dialogue");
         if (ClaimsAuthorityActions.Any(lower.Contains)) return new(false, "", "claims an action the engine did not perform");
@@ -55,6 +56,27 @@ public static partial class ResponseValidator
             if (!allowed.Any(a => a != 0 && Math.Abs(a - m.Amount) / a <= 0.02m))
                 return new(false, "", $"unsupported figure {m.Amount:0}");
         return new(true, text, null);
+    }
+
+    private static readonly HashSet<string> FunctionWords = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "the", "a", "an", "and", "to", "of", "we", "i", "is", "it", "that", "this", "you", "be", "for", "on", "in", "not", "but", "our",
+        "with", "have", "are", "if", "can", "will", "would", "my", "me", "at", "as", "do", "so", "what", "there", "need", "want", "think",
+    };
+
+    /// <summary>Cheap guard against a broken, wrong or corrupted model emitting fluent-looking garbage.</summary>
+    public static bool LooksLikeEnglishSpeech(string text)
+    {
+        int nonAscii = text.Count(ch => ch > 127 && ch != '—' && ch != '–' && ch != '’' && ch != '“' && ch != '”' && ch != '…');
+        if (nonAscii > text.Length * 0.05) return false;
+        var words = Regex.Matches(text, @"[A-Za-z']+").Select(m => m.Value).ToList();
+        if (words.Count < 2) return false;
+        int letters = text.Count(char.IsLetter);
+        if (letters < text.Length * 0.6) return false;
+        int fn = words.Count(w => FunctionWords.Contains(w));
+        if (words.Count >= 6 && fn < Math.Max(2, words.Count / 10)) return false;
+        double avgLen = words.Average(w => w.Length);
+        return avgLen is >= 2.5 and <= 9;
     }
 
     private static string TrimToSentence(string text, int max)

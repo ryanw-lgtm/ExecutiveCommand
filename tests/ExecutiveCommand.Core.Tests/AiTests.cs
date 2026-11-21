@@ -173,6 +173,16 @@ public class AntiManipulationTests
         Assert.StartsWith("unsupported figure", r.Replies[0].FallbackReason);
     }
 
+    [Theory]
+    [InlineData("[, meilleurtrystreetlongle latach worst")]
+    [InlineData("的 الرياض obywatel Mechan izzare unt")]
+    [InlineData("xq zzv blorp frang quex plim snorv")]
+    public void GibberishIsRejected(string text) => Assert.False(ResponseValidator.LooksLikeEnglishSpeech(text));
+
+    [Fact]
+    public void NormalSpeechIsAccepted() =>
+        Assert.True(ResponseValidator.LooksLikeEnglishSpeech("I'm not comfortable with that timeline, and I want the CMO in the room before we commit."));
+
     [Fact]
     public async Task ValidModelDialogueIsUsed()
     {

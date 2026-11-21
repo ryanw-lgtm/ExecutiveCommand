@@ -84,8 +84,12 @@ public sealed class MeetingService
                 if (llmIntent.Topic == Topics.General) llmIntent.Topic = rules.Topic;
                 llmIntent.ProposalFocusId ??= rules.ProposalFocusId;
                 if (llmIntent.AddressedRole == ExecRole.None) llmIntent.AddressedRole = rules.AddressedRole;
-                // If the model found no action but the rules did, prefer the rules (they are grounded by construction).
-                intent = llmIntent.Action == null && rules.Action != null ? rules : llmIntent;
+                // Rules are grounded by construction. Prefer them when the model found no action, or when the
+                // two disagree and the rule-based action is valid; otherwise take the model's reading.
+                bool rulesUsable = rules.Action != null && _engine.Validate(rules.Action).Status != ValidationStatus.Invalid;
+                bool disagree = llmIntent.Action?.Name != rules.Action?.Name;
+                intent = rules.Action != null && (llmIntent.Action == null || (disagree && rulesUsable)) ? rules : llmIntent;
+                if (intent == rules && llmIntent.Action != null && disagree) resp.SystemNotes.Add($"Interpretations differed ({llmIntent.Action.Name} vs {rules.Action!.Name}); used the rule-based reading.");
             }
             else resp.SystemNotes.Add("Local AI interpretation unavailable; used rule-based interpretation.");
         }

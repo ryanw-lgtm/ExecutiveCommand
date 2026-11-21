@@ -53,8 +53,11 @@ public sealed class ActionRegistry
                 ParamType.Integer => new JsonObject { ["type"] = "integer" },
                 ParamType.Money => new JsonObject { ["type"] = "number" },
                 ParamType.Boolean => new JsonObject { ["type"] = "boolean" },
-                _ => new JsonObject { ["type"] = "string" },
+                ParamType.Enum when p.EnumValues != null => new JsonObject { ["type"] = "string", ["enum"] = new JsonArray(p.EnumValues.Select(v => (JsonNode)JsonValue.Create(v)!).ToArray()) },
+                // Bounded strings keep grammar-constrained output finite (no truncated JSON).
+                _ => new JsonObject { ["type"] = "string", ["maxLength"] = Math.Min(p.MaxLength, 160) },
             };
+            if (p.Type == ParamType.Integer) { if (p.Min != null) prop["minimum"] = (int)p.Min; if (p.Max != null) prop["maximum"] = (int)p.Max; }
             paramProps[p.Name] = prop;
         }
         var actionNames = new JsonArray(_handlers.Keys.OrderBy(k => k).Select(k => (JsonNode)JsonValue.Create(k)!).ToArray());
@@ -76,7 +79,7 @@ public sealed class ActionRegistry
                     },
                     ["required"] = new JsonArray("name", "params"),
                 },
-                ["clarification"] = new JsonObject { ["type"] = "string" },
+                ["clarification"] = new JsonObject { ["type"] = "string", ["maxLength"] = 160 },
             },
             ["required"] = new JsonArray("intent", "addressed_role"),
         };
