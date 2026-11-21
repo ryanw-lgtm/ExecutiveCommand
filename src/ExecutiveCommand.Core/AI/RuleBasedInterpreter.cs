@@ -257,7 +257,7 @@ public static class RuleBasedInterpreter
         var sentences = Regex.Split(x, @"(?<=[.!?])\s+").Where(sn => TextParsing.DurationsDays(sn.ToLowerInvariant()).Count == 0 || sn.Split(' ').Length > 8).ToList();
         x = sentences.Count > 0 ? string.Join(" ", sentences) : x;
         x = Regex.Replace(x, @"(?i)^(please |i want you to |i need you to |i'd like you to |could you |can you |would you )", "");
-        x = Regex.Replace(x, @"(?i)^(have|ask|get|tell|task) (the |our )?\S+ (to )?", "");
+        x = Regex.Replace(x, @"(?i)^(have|ask|get|tell|task) (the |our )?\S+ (to |for )?", "");
         x = Regex.Replace(x, @"(?i)\b(within|in|by|over) (the next )?(\d+|one|two|three|four|five|six|a|a couple of|a few) (business )?(day|week|month)s?\b", "");
         x = Regex.Replace(x, @"(?i),?\s*and report back\b|\breport back\b", "");
         x = x.Trim(' ', '.', ',', '?', '!');

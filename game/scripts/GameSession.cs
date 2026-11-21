@@ -19,6 +19,7 @@ public sealed class PlayerSettings
     public bool Fullscreen { get; set; }
     public float UiScale { get; set; } = 1.0f;
     public bool Autosave { get; set; } = true;
+    public bool SeenWelcome { get; set; }
 }
 
 /// <summary>

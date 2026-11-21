@@ -37,6 +37,18 @@ public static class SmokeTest
             var game = main.ShowGame(); await Frames();
             Check(main.Session.State.Company.Name.Length > 0, "new game created");
             await Shot("03_dashboard");
+            game.ShowHelp(welcome: true); await Frames(); await Shot("03b_welcome");
+            foreach (var w in game.GetChildren().OfType<AcceptDialog>().ToList()) w.QueueFree();
+            await Frames();
+            var ideas = Core.AI.Guidance.Suggestions(main.Session.State);
+            Check(ideas.Count >= 5, "suggestions offered");
+            game.OpenMeeting(ideas[0].Attendees, ideas[0].Text); await Frames();
+            await Shot("03c_meeting_ideas");
+            var first = await game.Meeting.SayForTest(ideas[0].Text);
+            game.Meeting.RenderForTest(first);
+            Check(first.Outcome?.Executed == true, $"suggestion '{ideas[0].Text}' executes");
+            game.OpenInbox(main.Session.State.Inbox[0].Id); await Frames();
+            Check(true, "inbox jump");
 
             foreach (var v in game.ViewKeys.ToList())
             { game.Navigate(v); await Frames(2); }

@@ -36,8 +36,17 @@ public partial class MeetingView : VBoxContainer, IGameView
         SizeFlagsVertical = SizeFlags.ExpandFill;
         SizeFlagsHorizontal = SizeFlags.ExpandFill;
         AddChild(Ui.Heading("Meeting Room"));
+        AddChild(Ui.Label("Talk naturally. Say who should do what, by when, and with how much money. Nothing happens until you see \u25b6 RECORDED.", 14, Palette.Muted, wrap: true));
 
-        var pick = Ui.HBox(10, Ui.Label("Attendees:", 14, Palette.Muted));
+        // Who is in the room: one-click presets, or fine-tune with the checkboxes.
+        var presets = Ui.HBox(8, Ui.Label("Quick meetings:", 14, Palette.Muted));
+        foreach (var (label, roles, tip) in Presets)
+        {
+            var b = Ui.Button(label, () => OpenWith(roles, null));
+            b.TooltipText = tip;
+            presets.AddChild(b);
+        }
+        var pick = Ui.HBox(10, Ui.Label("Or choose:", 14, Palette.Muted));
         foreach (var r in Roles.Addressable)
         {
             var cb = new CheckBox { Text = Roles.Label(r) == "Enterprise Architecture Director" ? "EA Director" : Roles.Label(r), ButtonPressed = r is ExecRole.CIO or ExecRole.CISO or ExecRole.EADirector };
@@ -45,13 +54,15 @@ public partial class MeetingView : VBoxContainer, IGameView
             pick.AddChild(cb);
         }
         pick.AddChild(Ui.Spacer());
-        pick.AddChild(Ui.Button("Start new meeting", StartMeeting, primary: true));
-        AddChild(Ui.Card(pick));
+        pick.AddChild(Ui.Button("Start meeting", StartMeeting, primary: true));
+        AddChild(Ui.Card(Ui.VBox(8, presets, pick)));
 
         _who = Ui.Label("", 13, Palette.Muted, wrap: true);
         AddChild(_who);
 
-        _log = new RichTextLabel { BbcodeEnabled = true, ScrollFollowing = true, SizeFlagsVertical = SizeFlags.ExpandFill, SelectionEnabled = true, CustomMinimumSize = new Vector2(0, 300) };
+        _log = new RichTextLabel { BbcodeEnabled = true, ScrollFollowing = true, SizeFlagsVertical = SizeFlags.ExpandFill, SelectionEnabled = true, CustomMinimumSize = new Vector2(0, 260) };
+        _log.AddThemeFontSizeOverride("normal_font_size", 16);
+        _log.AddThemeFontSizeOverride("bold_font_size", 16);
         AddChild(_log);
 
         _confirmText = Ui.Label("", 15, Palette.Warn, wrap: true);
@@ -60,14 +71,60 @@ public partial class MeetingView : VBoxContainer, IGameView
         _confirmCard.Visible = false;
         AddChild(_confirmCard);
 
+        // Clickable ideas based on the current situation. Clicking fills the box so you can edit before sending.
+        _ideas = new HFlowContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        _ideas.AddThemeConstantOverride("h_separation", 6);
+        _ideas.AddThemeConstantOverride("v_separation", 6);
+        AddChild(Ui.HBox(8, Ui.Label("Ideas:", 13, Palette.Muted), _ideas));
+
         _thinking = Ui.Label("", 13, Palette.Muted);
-        _input = new LineEdit { PlaceholderText = "Speak to the room — e.g. \"Daniel, investigate alternatives before we spend another $180,000. Three weeks.\"", SizeFlagsHorizontal = SizeFlags.ExpandFill, MaxLength = 1000 };
+        _input = new LineEdit { PlaceholderText = "Type what you want to say, then press Enter — or click an idea above", SizeFlagsHorizontal = SizeFlags.ExpandFill, MaxLength = 1000, CustomMinimumSize = new Vector2(0, 42) };
+        _input.AddThemeFontSizeOverride("font_size", 16);
         _input.TextSubmitted += _text => _ = Send();
-        _send = Ui.Button("Say", () => _ = Send(), primary: true);
+        _send = Ui.Button("Say  \u23ce", () => _ = Send(), primary: true);
         _cancelGen = Ui.Button("Stop", () => _cts?.Cancel());
         _cancelGen.Visible = false;
         AddChild(Ui.HBox(8, _input, _send, _cancelGen));
         AddChild(_thinking);
+    }
+
+    private static readonly (string Label, ExecRole[] Roles, string Tip)[] Presets =
+    {
+        ("Technology team", new[] { ExecRole.CIO, ExecRole.CISO, ExecRole.EADirector }, "Your direct reports: you can assign them work"),
+        ("Executive committee", new[] { ExecRole.CEO, ExecRole.CFO, ExecRole.CMO, ExecRole.CNO }, "Your peers and your boss: ask, persuade, report"),
+        ("CFO one-on-one", new[] { ExecRole.CFO }, "Money, savings and capital approvals"),
+        ("Clinical leaders", new[] { ExecRole.CMO, ExecRole.CNO, ExecRole.CIO }, "Patient safety and anything touching the EHR"),
+        ("Vendor meeting", new[] { ExecRole.Vendor, ExecRole.CIO }, "The EHR vendor's account executive"),
+    };
+
+    private HFlowContainer _ideas = null!;
+
+    /// <summary>Open a meeting with specific people, optionally with a sentence ready to send.</summary>
+    public void OpenWith(IEnumerable<ExecRole> roles, string? prefill)
+    {
+        var set = roles.ToHashSet();
+        foreach (var (r, cb) in _attendees) cb.ButtonPressed = set.Contains(r);
+        StartMeeting();
+        if (prefill != null) { _input.Text = prefill; _input.CaretColumn = prefill.Length; }
+        if (IsInsideTree()) _input.CallDeferred(Control.MethodName.GrabFocus);
+    }
+
+    private void RefreshIdeas()
+    {
+        Ui.Clear(_ideas);
+        if (!_game.Session.HasGame) return;
+        foreach (var sug in Guidance.Suggestions(_game.Session.State).Take(7))
+        {
+            var chip = Ui.Button(sug.Text, () =>
+            {
+                // If the right people aren't in the room, bring them in.
+                if (_meeting != null && !sug.Attendees.Any(r => _meeting.Attendees.Contains(r))) OpenWith(sug.Attendees, sug.Text);
+                else { _input.Text = sug.Text; _input.CaretColumn = sug.Text.Length; _input.GrabFocus(); }
+            });
+            chip.TooltipText = sug.Why + " — click to put it in the box, then press Enter";
+            chip.AddThemeFontSizeOverride("font_size", 13);
+            _ideas.AddChild(chip);
+        }
     }
 
     public void Refresh(GameSession session)
@@ -77,6 +134,7 @@ public partial class MeetingView : VBoxContainer, IGameView
         if (_meeting == null) StartMeeting();
         _confirmCard.Visible = _meeting?.HasPendingConfirmation == true;
         _confirmText.Text = _meeting?.PendingConfirmationPrompt ?? "";
+        RefreshIdeas();
     }
 
     private void StartMeeting()

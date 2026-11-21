@@ -33,7 +33,7 @@ public static class DialogueComposer
         bool blunt = x.Assertiveness >= 65 || x.Candor >= 80;
         string Pick(params string[] options) => options[Math.Abs(HashCode(x.Id, c.TurnNumber)) % options.Length];
         var st = c.Stance;
-        string reasons = st == null ? "" : string.Join(" ", st.Reasons.Take(2));
+        string reasons = st == null ? "" : string.Join(" ", st.Ordered.Take(2));
         string conditions = st == null || st.Conditions.Count == 0 ? "" : $" Before I'd be comfortable, I'd want {Join(st.Conditions)}.";
 
         switch (c.Kind)

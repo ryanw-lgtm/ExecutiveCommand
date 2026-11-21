@@ -1,5 +1,19 @@
 # Development log
 
+## 2026-11-21 — Iteration 2: usability pass
+
+### Changed
+- **Welcome guide** on first launch and a **Help** button (F1): the game loop in four steps.
+- **Dashboard "Needs your attention"**: incidents, late work, new findings, pending decisions, contract deadlines, savings progress, the unaddressed DR gap. Each item has a button that goes to the right screen or opens the right meeting.
+- **"Things you could say"**: context-aware example sentences on the dashboard and as clickable chips in the meeting room. A unit test guarantees every suggestion is understood by the interpreter and validates.
+- **Meeting room**: one-click attendee presets (Technology team, Executive committee, CFO one-on-one, Clinical leaders, Vendor), larger text, clearer instructions.
+- **Decisions**: every executive's position is shown in plain view with a one-line reason; the engine now tags reasons as for or against, so the headline never contradicts the position. Plain-language authority text; "Discuss first" button.
+- **Inbox**: "Discuss with …" and "Respond to incident" buttons, "Mark all read", and the view sized to the window.
+- **Top bar**: Next day / week / month with tooltips and shortcuts (F5/F6/F7), Ctrl+1–9 to switch screens, hover help on navigation and dashboard tiles; the company line truncates so the layout never overflows.
+
+### Verified
+- 62/62 tests passing; Godot smoke test ALL PASSED (now also covers help, suggestions, meeting-from-suggestion, inbox jump); screenshots re-rendered and reviewed at 1600×900.
+
 ## 2026-11-21 — Iteration 1: foundation and first vertical slice
 
 ### Built
