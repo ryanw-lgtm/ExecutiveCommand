@@ -1,0 +1,14 @@
+bin/
+obj/
+.godot/
+.mono/
+*.user
+*.db
+*.db-wal
+*.db-shm
+/runtime/
+/models/
+/build/
+/export/
+*.gguf
+TestResults/
