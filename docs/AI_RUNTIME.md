@@ -7,8 +7,10 @@
 * `LlamaServerModel` launches the bundled `llama-server` on `127.0.0.1` on a free port, polls `/health`
   (Starting → Loading → Ready), and calls `/v1/chat/completions`.
 * **Interpretation** uses `response_format: json_schema` (grammar-constrained) with a schema generated
-  from the action registry, bounded string lengths, temperature 0.1, and a 20 s timeout.
-* **Dialogue** uses temperature 0.7, about 180 tokens, and a 30 s timeout. Cancellation closes the HTTP
+  from the action registry, bounded string lengths, temperature 0.1, and a 60 s timeout. It is only used when
+  the rule-based interpreter cannot tell what the player meant.
+* **Dialogue** uses temperature 0.7, at most 110 tokens (1–3 sentences), a 120 s timeout and one retry with
+  feedback if validation rejects the draft. Cancellation closes the HTTP
   request, and the server aborts generation (tested: under 300 ms, server still healthy afterwards).
 * Every failure path (missing files, crash, timeout, truncation, invalid or implausible output) returns
   `null`, and the game falls back to deterministic behavior.
