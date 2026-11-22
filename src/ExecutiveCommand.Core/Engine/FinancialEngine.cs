@@ -109,6 +109,7 @@ public static class FinancialEngine
         };
         f.Statements.Add(st);
         AssertReconciles(s);
+        s.History.Add(Snapshot(s, st));
         // Keep the save compact: only the last 24 months of detailed entries are retained; statements keep history.
         var cutoff = start.AddMonths(-24);
         f.Ledger.RemoveAll(l => l.Date < cutoff);
@@ -137,6 +138,13 @@ public static class FinancialEngine
         int months = (lastClosed.Year * 12 + lastClosed.Month) - (fyStart.Year * 12 + fyStart.Month) + 1;
         return Math.Max(0, months);
     }
+
+    public static MetricSnapshot Snapshot(GameState s, MonthlyStatement? st) => new()
+    {
+        Date = s.CurrentDate, Cash = s.Finance.Cash, OperatingMargin = st?.OperatingMargin, TechOpex = st?.TechOpex ?? 0,
+        BoardConfidence = Math.Round(s.Metrics.BoardConfidence, 1), Morale = Math.Round(s.Metrics.EmployeeMorale, 1),
+        AssessedRisk = s.Risks.Where(r => r.Known && !r.Closed).Sum(r => r.Score), TechCapitalRemaining = s.Finance.TechCapitalBudgetRemaining,
+    };
 
     public static void AssertReconciles(GameState s)
     {

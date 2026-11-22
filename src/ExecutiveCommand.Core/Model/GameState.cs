@@ -45,6 +45,8 @@ public sealed class GameState
     public List<MeetingTurn> MeetingLog { get; set; } = new();
     public List<PerformanceReview> Reviews { get; set; } = new();
     public List<ScheduledEvent> Schedule { get; set; } = new();
+    /// <summary>Month-end snapshots of headline metrics, for trends and sparklines. Older saves start empty.</summary>
+    public List<MetricSnapshot> History { get; set; } = new();
 
     public string NewId(string prefix) => $"{prefix}-{NextId++:D4}";
 
@@ -494,6 +496,18 @@ public sealed class PerformanceReview
     public ReviewRating Rating { get; set; }
     public List<string> Evidence { get; set; } = new();
     public string ReviewerComment { get; set; } = "";
+}
+
+public sealed class MetricSnapshot
+{
+    public DateOnly Date { get; set; }
+    public decimal Cash { get; set; }
+    public double? OperatingMargin { get; set; }
+    public decimal TechOpex { get; set; }
+    public double BoardConfidence { get; set; }
+    public double Morale { get; set; }
+    public int AssessedRisk { get; set; }
+    public decimal TechCapitalRemaining { get; set; }
 }
 
 public sealed class ScheduledEvent

@@ -63,6 +63,10 @@ public static class SmokeTest
             main.Session.Settings.ReplyPacing = 0;
             game.OpenInbox(main.Session.State.Inbox[0].Id); await Frames();
             Check(true, "inbox jump");
+            game.OpenPalette(); await Frames(); await Shot("03e_command_palette");
+            var pal = game.GetChildren().OfType<PopupPanel>().FirstOrDefault();
+            Check(pal != null && pal.Visible, "command palette opens");
+            pal!.Hide(); await Frames();
 
             foreach (var v in game.ViewKeys.ToList())
             { game.Navigate(v); await Frames(2); }

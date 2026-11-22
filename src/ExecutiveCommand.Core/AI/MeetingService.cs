@@ -209,7 +209,7 @@ public sealed class MeetingService
         bool declined = action.Name == "request_assessment" && outcome.Summary.Contains("declined");
         await AddReplyAsync(resp, new ReplyContext
         {
-            Exec = subject, Kind = declined ? ReplyKind.Declined : ReplyKind.ActionExecuted, Stance = declined ? null : stance, PlayerText = text,
+            Exec = subject, Kind = declined ? ReplyKind.Declined : ReplyKind.ActionExecuted, Stance = declined ? null : stance, PlayerText = text, Brief = confirmed,
             Topic = _engine.Registry.Get(action.Name)!.TopicOf(S, action), EngineResult = new List<string> { outcome.Summary }.Concat(outcome.Effects).ToList(),
             Facts = ContextBuilder.Facts(S, subject, _engine.Registry.Get(action.Name)!.TopicOf(S, action)), TurnNumber = _turn,
         }, declined ? null : stance, ct);

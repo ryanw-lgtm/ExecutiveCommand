@@ -18,6 +18,7 @@ public partial class Main : Control
         bg.SetAnchorsPreset(LayoutPreset.FullRect);
         AddChild(bg);
         Session = new GameSession();
+        Motion.Reduced = Session.Settings.ReduceMotion;
         ApplyDisplaySettings();
         GetTree().AutoAcceptQuit = false; // stop the inference process cleanly before exiting
 
@@ -50,15 +51,19 @@ public partial class Main : Control
 
     public void Toast(string text, Color? color = null)
     {
-        var l = Ui.Label(text, 15, color ?? Palette.Text);
-        var card = Ui.Card(l, Palette.SurfaceRaised, color ?? Palette.Accent);
-        card.SetAnchorsPreset(LayoutPreset.CenterBottom);
-        card.Position = new Vector2(GetViewportRect().Size.X / 2 - 260, GetViewportRect().Size.Y - 90);
-        card.CustomMinimumSize = new Vector2(520, 0);
+        // Toast: bottom-right, colored edge + text (never color alone), ~3s, exit faster than entrance.
+        var c = color ?? Palette.Accent;
+        var l = Ui.Label(text, Fonts.Sm + 1, Palette.TextPrimary, wrap: true);
+        var card = Ui.AccentCard(l, c);
+        card.AddThemeStyleboxOverride("panel", GameTheme.Box(Palette.BgElevated, Palette.BorderStrong, 8, 14));
+        card.CustomMinimumSize = new Vector2(440, 0);
+        card.Size = new Vector2(440, 0);
         AddChild(card);
+        card.Position = new Vector2(GetViewportRect().Size.X - 440 - 24, GetViewportRect().Size.Y - 96);
+        Motion.FadeIn(card, 0.2, 8);
         var tween = CreateTween();
-        tween.TweenInterval(2.8);
-        tween.TweenProperty(card, "modulate:a", 0.0, 0.6);
+        tween.TweenInterval(3.0);
+        tween.TweenProperty(card, "modulate:a", 0.0, Motion.Exit);
         tween.TweenCallback(Callable.From(card.QueueFree));
     }
 

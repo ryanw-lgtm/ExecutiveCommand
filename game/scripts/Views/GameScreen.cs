@@ -33,35 +33,44 @@ public partial class GameScreen : Control
         root.SetAnchorsPreset(LayoutPreset.FullRect);
         AddChild(root);
 
-        // ---- Top bar
-        var bar = Ui.HBox(12);
-        var barCard = Ui.Card(bar, Palette.Charcoal, Palette.Border);
+        // ---- Top bar: where you are on the left, time controls in the middle, utilities on the right.
+        var bar = Ui.HBox(8);
+        var barCard = Ui.Card(bar, Palette.BgSunken, Palette.Border, 12);
+        barCard.AddThemeStyleboxOverride("panel", NoRadius(GameTheme.Box(Palette.BgSunken, Palette.Border, 0, 12)));
         root.AddChild(barCard);
-        _company = Ui.Label("", 16, Palette.Text);
-        _date = Ui.Label("", 16, Palette.Accent);
-        _ai = Ui.Label("", 13, Palette.Muted);
-        // The company line shrinks with "…" so the bar never forces the layout wider than the window.
+        var brand = Ui.Label("EXECUTIVE COMMAND", Fonts.Xs, Palette.Accent, font: Fonts.Caption);
+        _company = Ui.Label("", Fonts.Sm, Palette.TextSecondary);
         _company.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
         _company.SizeFlagsHorizontal = SizeFlags.ExpandFill;
         _company.CustomMinimumSize = new Vector2(120, 0);
-        bar.AddChild(_company);
+        bar.AddChild(Ui.Gap(4));
+        var who = Ui.VBox(0, brand, _company);
+        who.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        bar.AddChild(who);
+        _ai = Ui.Label("", Fonts.Xs, Palette.TextMuted);
         bar.AddChild(_ai);
-        bar.AddChild(_date);
-        AddTip(bar, Ui.Button("Next day", () => Advance(1)), "Move the calendar forward one day (F5). Your executives keep working while time passes.");
-        AddTip(bar, Ui.Button("Next week", () => Advance(7)), "Move forward one week (F6).");
-        AddTip(bar, Ui.Button("Next month", () => Advance(30)), "Move forward 30 days (F7). Month-end brings the financial close.");
-        AddTip(bar, Ui.Button("Save", () => main.ShowSaveLoad(true)), "Save or load a game. The game also autosaves every time you advance.");
-        AddTip(bar, Ui.Button("Settings", () => main.ShowSettings(true)), "Interface size, fullscreen, local AI.");
-        AddTip(bar, Ui.Button("? Help", () => ShowHelp()), "How to play (F1)");
-        AddTip(bar, Ui.Button("Menu", () => { Session.Save(); main.ShowMainMenu(); }), "Save and return to the main menu.");
+        bar.AddChild(Ui.Gap(8));
+        _date = Ui.Label("", Fonts.Base, Palette.TextPrimary, font: Fonts.MonoMedium);
+        var dateBox = Ui.HBox(8, Ui.Icon("calendar-plus", 18, Palette.Accent), _date);
+        bar.AddChild(dateBox);
+        AddTip(bar, Ui.Button("Day", () => Advance(1), icon: "play"), "Advance one day (F5). Your executives keep working while time passes.");
+        AddTip(bar, Ui.Button("Week", () => Advance(7), icon: "fast-forward"), "Advance one week (F6).");
+        AddTip(bar, Ui.Button("Month", () => Advance(30), icon: "fast-forward"), "Advance 30 days (F7). Month-end brings the financial close.");
+        bar.AddChild(Ui.Gap(8));
+        AddTip(bar, IconButton("magnifying-glass", OpenPalette), "Command palette — jump anywhere or do anything (Ctrl+K)");
+        AddTip(bar, IconButton("floppy-disk", () => main.ShowSaveLoad(true)), "Save or load (the game also autosaves when you advance time)");
+        AddTip(bar, IconButton("question", () => ShowHelp()), "How to play (F1)");
+        AddTip(bar, IconButton("gear-six", () => main.ShowSettings(true)), "Settings: interface size, motion, local AI");
+        AddTip(bar, IconButton("list", () => { Session.Save(); main.ShowMainMenu(); }), "Save and return to the main menu");
 
         // ---- Body: nav + content
         var body = Ui.HBox(0);
         body.SizeFlagsVertical = SizeFlags.ExpandFill;
         root.AddChild(body);
-        var nav = Ui.VBox(4);
-        var navCard = Ui.Card(nav, Palette.Charcoal, Palette.Border);
-        navCard.CustomMinimumSize = new Vector2(220, 0);
+        var nav = Ui.VBox(2);
+        var navCard = Ui.Card(nav, Palette.BgSunken, Palette.Border, 12);
+        navCard.AddThemeStyleboxOverride("panel", NoRadius(GameTheme.Box(Palette.BgSunken, Palette.Border, 0, 12)));
+        navCard.CustomMinimumSize = new Vector2(232, 0);
         body.AddChild(navCard);
 
         Register("Dashboard", new DashboardView(this));
@@ -73,21 +82,27 @@ public partial class GameScreen : Control
         Register("Risk Register", new RiskView(this));
         Register("Executives", new PeopleView(this));
         Register("Performance", new PerformanceView(this));
+        nav.AddChild(Ui.Gap(4));
         int n = 1;
         foreach (var (title, _) in _views)
         {
-            var b = Ui.Button(title, () => Navigate(title));
-            b.Alignment = HorizontalAlignment.Left;
-            b.CustomMinimumSize = new Vector2(0, 40);
+            var b = new Button { Text = title, Alignment = HorizontalAlignment.Left, Icon = Icons.Get(NavIcon[title], 20), CustomMinimumSize = new Vector2(0, 40), FocusMode = FocusModeEnum.All, MouseDefaultCursorShape = CursorShape.PointingHand };
+            b.AddThemeStyleboxOverride("normal", NavStyle(false));
+            b.AddThemeStyleboxOverride("hover", GameTheme.Box(Palette.BgHover, null, 6, 12));
+            b.AddThemeStyleboxOverride("pressed", NavStyle(true));
+            b.AddThemeFontOverride("font", Fonts.SansMedium);
+            b.Pressed += () => Navigate(title);
             b.TooltipText = (NavHelp.TryGetValue(title, out var h) ? h : title) + $"  (Ctrl+{n++})";
             _nav[title] = b;
             nav.AddChild(b);
         }
         nav.AddChild(Ui.Spacer(false));
-        nav.AddChild(Ui.Label(Session.State.Company.FictionNotice, 11, Palette.Muted, wrap: true));
+        nav.AddChild(Ui.Label(Session.State.Company.FictionNotice, 11, Palette.TextMuted, wrap: true));
 
         _content = new MarginContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill, SizeFlagsVertical = SizeFlags.ExpandFill };
-        foreach (var side in new[] { "left", "right", "top", "bottom" }) _content.AddThemeConstantOverride($"margin_{side}", 20);
+        foreach (var side in new[] { "left", "right" }) _content.AddThemeConstantOverride($"margin_{side}", 32);
+        _content.AddThemeConstantOverride("margin_top", 24);
+        _content.AddThemeConstantOverride("margin_bottom", 16);
         body.AddChild(_content);
 
         Session.StateChanged += OnStateChanged;
@@ -98,6 +113,78 @@ public partial class GameScreen : Control
     }
 
     private void Register(string navKey, Control view) => _views[navKey] = view;
+
+    private static readonly Dictionary<string, string> NavIcon = new()
+    {
+        ["Dashboard"] = "squares-four", ["Inbox"] = "tray", ["Meeting Room"] = "chats-circle", ["Decisions"] = "scales", ["Projects"] = "kanban",
+        ["Finance"] = "chart-line-up", ["Risk Register"] = "shield-warning", ["Executives"] = "users-three", ["Performance"] = "medal",
+    };
+
+    private static StyleBoxFlat NoRadius(StyleBoxFlat sb) { sb.SetCornerRadiusAll(0); sb.BorderWidthTop = sb.BorderWidthLeft = 0; return sb; }
+
+    private static StyleBoxFlat NavStyle(bool active)
+    {
+        var sb = GameTheme.Box(active ? Palette.AccentSoft : new Color(0, 0, 0, 0), null, 6, 12);
+        if (active) { sb.BorderColor = Palette.Accent; sb.BorderWidthLeft = 3; }
+        return sb;
+    }
+
+    private static Button IconButton(string icon, Action onPressed)
+    {
+        var b = Ui.Button("", onPressed, icon: icon);
+        b.Icon = Icons.Get(icon, 20);
+        b.CustomMinimumSize = new Vector2(38, 36);
+        return b;
+    }
+
+    // ---- Command palette (Ctrl+K): keyboard-first, so it opens instantly with no animation.
+    private PopupPanel? _palette;
+
+    public void OpenPalette()
+    {
+        _palette?.QueueFree();
+        var cmds = new List<(string Label, string Group, Action Run)>();
+        foreach (var k in _views.Keys) cmds.Add(($"Go to {k}", "Navigate", () => Navigate(k)));
+        cmds.Add(("Advance one day", "Time", () => Advance(1)));
+        cmds.Add(("Advance one week", "Time", () => Advance(7)));
+        cmds.Add(("Advance one month", "Time", () => Advance(30)));
+        cmds.Add(("Save game", "Game", () => _main.ShowSaveLoad(true)));
+        cmds.Add(("How to play", "Game", () => ShowHelp()));
+        cmds.Add(("Settings", "Game", () => _main.ShowSettings(true)));
+        foreach (var sug in Core.AI.Guidance.Suggestions(Session.State))
+            cmds.Add(($"Say: {sug.Text}", "Meeting", () => OpenMeeting(sug.Attendees, sug.Text)));
+        foreach (var x in Session.State.Executives.Where(x => x.Role != ExecRole.Vendor))
+            cmds.Add(($"Meet with {x.Name} ({x.Role})", "Meeting", () => OpenMeeting(new[] { x.Role }, null)));
+
+        var input = new LineEdit { PlaceholderText = "Type to search screens, actions, people, things to say…", CustomMinimumSize = new Vector2(640, 44) };
+        var list = new ItemList { CustomMinimumSize = new Vector2(640, 360) };
+        List<(string Label, string Group, Action Run)> shown = new();
+        void Filter()
+        {
+            list.Clear();
+            var q = input.Text.Trim().ToLowerInvariant();
+            shown = cmds.Where(c => q.Length == 0 || q.Split(' ', StringSplitOptions.RemoveEmptyEntries).All(w => c.Label.ToLowerInvariant().Contains(w))).Take(40).ToList();
+            foreach (var c in shown) { int i = list.AddItem($"{c.Label}"); list.SetItemTooltip(i, c.Group); }
+            if (shown.Count > 0) list.Select(0);
+        }
+        void RunAt(int i) { if (i < 0 || i >= shown.Count) return; var run = shown[i].Run; _palette!.Hide(); run(); }
+        input.TextChanged += _ => Filter();
+        input.TextSubmitted += _ => RunAt(list.GetSelectedItems().FirstOrDefault(0));
+        input.GuiInput += ev =>
+        {
+            if (ev is not InputEventKey { Pressed: true } key || shown.Count == 0) return;
+            int cur = list.GetSelectedItems().FirstOrDefault(0);
+            if (key.Keycode == Key.Down) { list.Select(Math.Min(shown.Count - 1, cur + 1)); list.EnsureCurrentIsVisible(); input.AcceptEvent(); }
+            if (key.Keycode == Key.Up) { list.Select(Math.Max(0, cur - 1)); list.EnsureCurrentIsVisible(); input.AcceptEvent(); }
+        };
+        list.ItemActivated += i => RunAt((int)i);
+        _palette = new PopupPanel();
+        _palette.AddChild(Ui.VBox(10, Ui.Caption("Command palette"), input, list, Ui.Label("↑↓ to choose · Enter to run · Esc to close", Fonts.Xs, Palette.TextMuted)));
+        AddChild(_palette);
+        Filter();
+        _palette.PopupCentered();
+        input.GrabFocus();
+    }
 
     private static readonly Dictionary<string, string> NavHelp = new()
     {
@@ -138,7 +225,11 @@ public partial class GameScreen : Control
         else if (k.CtrlPressed && k.Keycode >= Key.Key1 && k.Keycode <= Key.Key9)
         {
             int i = (int)(k.Keycode - Key.Key1);
-            if (i < _views.Count) Navigate(_views.Keys.ElementAt(i));
+            if (i < _views.Count) Navigate(_views.Keys.ElementAt(i), animate: false); // keyboard: no animation
+        }
+        else if (k.CtrlPressed && k.Keycode == Key.K)
+        {
+            OpenPalette();
         }
         else return;
         GetViewport().SetInputAsHandled();
@@ -188,15 +279,22 @@ public partial class GameScreen : Control
 
     public IReadOnlyCollection<string> ViewKeys => _views.Keys;
 
-    public void Navigate(string title)
+    public void Navigate(string title) => Navigate(title, animate: true);
+
+    public void Navigate(string title, bool animate)
     {
         _current = title;
         foreach (var c in _content.GetChildren()) _content.RemoveChild(c);
         var v = _views[title];
         _content.AddChild(v);
         foreach (var (t, b) in _nav)
-            b.AddThemeStyleboxOverride("normal", t == title ? GameTheme.Box(Palette.AccentDim, Palette.Accent, 5, 10) : GameTheme.Box(Palette.SurfaceRaised, Palette.Border, 5, 10));
+        {
+            b.AddThemeStyleboxOverride("normal", NavStyle(t == title));
+            b.AddThemeColorOverride("font_color", t == title ? Palette.TextPrimary : Palette.TextSecondary);
+            b.AddThemeColorOverride("icon_normal_color", t == title ? Palette.Accent : Palette.TextMuted);
+        }
         RefreshAll();
+        if (animate) Motion.FadeIn(v, Motion.Fade, 0);
     }
 
     private void OnStateChanged() => RefreshAll();
@@ -210,15 +308,15 @@ public partial class GameScreen : Control
             Core.AI.Llm.LlmStatus.Loading or Core.AI.Llm.LlmStatus.Starting => "◌ AI loading",
             _ => "○ Scripted dialogue",
         };
-        _ai.AddThemeColorOverride("font_color", s == Core.AI.Llm.LlmStatus.Ready ? Palette.Good : Palette.Muted);
+        _ai.AddThemeColorOverride("font_color", s == Core.AI.Llm.LlmStatus.Ready ? Palette.Success : Palette.TextMuted);
     }
 
     public void RefreshAll()
     {
         var s = Session.State;
-        _company.Text = $"{s.Company.Name}  ·  {s.Player.Name}, {s.Player.Title}  ·  {s.Difficulty}";
+        _company.Text = $"{s.Player.Name}, {s.Player.Title} · {s.Company.Name} · {s.Difficulty}";
         _company.TooltipText = _company.Text;
-        _date.Text = s.CurrentDate.ToString("dddd, MMMM d, yyyy");
+        _date.Text = s.CurrentDate.ToString("ddd MMM d, yyyy");
         int unread = s.Inbox.Count(m => !m.Read);
         _nav["Inbox"].Text = unread > 0 ? $"Inbox  ({unread})" : "Inbox";
         int pending = s.Proposals.Count(p => p.Status == ProposalStatus.Pending) + s.Incidents.Count(i => i.Status == IncidentStatus.Active && i.ResponseOptions.Count > 0);

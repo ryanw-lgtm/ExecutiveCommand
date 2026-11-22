@@ -22,14 +22,14 @@ public abstract partial class StateView : VBoxContainer, IGameView
         Game = game;
         SizeFlagsVertical = SizeFlags.ExpandFill;
         SizeFlagsHorizontal = SizeFlags.ExpandFill;
-        Body = Ui.VBox(12);
+        Body = Ui.VBox(16);
         AddChild(Ui.Scroll(Body));
     }
 
     public void Refresh(GameSession session)
     {
         Ui.Clear(Body);
-        Body.AddChild(Ui.Heading(Title));
+        Body.AddChild(Ui.Heading(Title, 28));
         Build(session.State);
     }
 
@@ -65,12 +65,6 @@ public abstract partial class StateView : VBoxContainer, IGameView
 
 public partial class DashboardView : StateView
 {
-    private static void Tips(Control grid, params string[] tips)
-    {
-        int i = 0;
-        foreach (var c in grid.GetChildren().OfType<Control>()) if (i < tips.Length) c.TooltipText = tips[i++];
-    }
-
     public override string Title => "Executive Dashboard";
     public DashboardView() { }
     public DashboardView(GameScreen g) : base(g) { }
@@ -79,93 +73,122 @@ public partial class DashboardView : StateView
     {
         var f = s.Finance;
         var last = f.Statements.LastOrDefault();
+        var hist = s.History;
+        MetricSnapshot? prev = hist.Count >= 2 ? hist[^2] : null, now = hist.LastOrDefault();
         var tech = s.Departments.First(d => d.Id == s.Player.DepartmentId);
         int risk = s.Risks.Where(r => r.Known && !r.Closed).Sum(r => r.Score);
 
         if (s.Outcome != GameOutcome.InProgress)
-            Body.AddChild(Ui.Card(Ui.Label("Your tenure as CTO has ended. Review the record in Performance, then start a new career from the menu.", 16, Palette.Bad, wrap: true), Palette.SurfaceRaised, Palette.Bad));
+            Body.AddChild(Ui.AccentCard(Ui.Label("Your tenure as CTO has ended. Review the record in Performance, then start a new career from the menu.", Fonts.Base, Palette.TextPrimary, wrap: true), Palette.Danger));
 
-        // What needs you right now — each with a button that takes you there.
+        // ── Row 1: attention (wide) + financial pulse (narrow)
+        var row1 = Ui.HBox(16);
         var attention = Guidance.Attention(s);
-        var att = Ui.VBox(6, Ui.Caption("Needs your attention"));
-        if (attention.Count == 0) att.AddChild(Ui.Label("Nothing urgent. A good time to plan ahead — or advance time.", 14, Palette.Muted));
+        var att = Ui.VBox(10, Ui.HBox(8, Ui.Caption("Needs your attention"), Ui.Spacer(), Ui.Label($"{attention.Count} item{(attention.Count == 1 ? "" : "s")}", Fonts.Xs, Palette.TextMuted)));
+        if (attention.Count == 0) att.AddChild(Ui.Empty("Nothing needs you right now.", "A good moment to plan ahead in the Meeting Room — or advance time.", "check-circle"));
         foreach (var item in attention.Take(6))
         {
-            var dot = Ui.Label("\u25cf", 14, item.Level switch { AttentionLevel.Urgent => Palette.Bad, AttentionLevel.Important => Palette.Warn, _ => Palette.Accent });
+            var (icon, color) = item.Level switch
+            {
+                AttentionLevel.Urgent => ("warning-circle", Palette.Danger),
+                AttentionLevel.Important => ("arrow-right", Palette.Warning),
+                _ => ("info", Palette.Info),
+            };
             var btn = Ui.Button(item.ButtonLabel, () =>
             {
                 if (item.NavigateTo == "Meeting Room" || (item.MeetWith != null && item.NavigateTo != "Decisions")) Game.OpenMeeting(item.MeetWith ?? new[] { ExecRole.CIO }, item.Prefill);
                 else if (item.NavigateTo == "Inbox") Game.OpenInbox(item.RelatedId);
                 else Game.Navigate(item.NavigateTo);
             }, primary: item.Level == AttentionLevel.Urgent);
-            btn.CustomMinimumSize = new Vector2(170, 0);
-            att.AddChild(Ui.HBox(10, dot, Ui.Label(item.Text, 15, null, wrap: true), btn));
+            btn.CustomMinimumSize = new Vector2(168, 34);
+            btn.SizeFlagsVertical = SizeFlags.ShrinkCenter;
+            var label = Ui.Label(item.Text, Fonts.Base, Palette.TextPrimary, wrap: true);
+            att.AddChild(Ui.HBox(12, Ui.Icon(icon, 20, color), label, btn));
         }
-        Body.AddChild(Ui.Card(att, null, attention.Any(a => a.Level == AttentionLevel.Urgent) ? Palette.Bad : Palette.Border));
+        var attCard = Ui.Card(att, null, null, 20);
+        attCard.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        attCard.SizeFlagsStretchRatio = 2.1f;
+        row1.AddChild(attCard);
 
-        var ideas = Guidance.Suggestions(s).Where(x => !x.Text.EndsWith('?')).Take(4).ToList();
-        if (ideas.Count > 0)
+        var pulse = Ui.VBox(10, Ui.Caption("Financial pulse"));
+        var margins = hist.Where(h => h.OperatingMargin != null).Select(h => h.OperatingMargin!.Value * 100).ToArray();
+        var marginRow = Ui.HBox(12, Ui.Num(last == null ? "—" : $"{last.OperatingMargin * 100:0.0}%", 32, last == null ? Palette.TextPrimary : Palette.ForScore(last.OperatingMargin * 100, 2.5, 0)), Ui.Spacer());
+        if (margins.Length >= 3) marginRow.AddChild(new Sparkline { Values = margins, LineColor = Palette.TextSecondary, SizeFlagsVertical = SizeFlags.ShrinkCenter });
+        pulse.AddChild(Ui.VBox(0, Ui.Label("Operating margin", Fonts.Sm, Palette.TextSecondary), marginRow,
+            Ui.Label(last == null ? "Appears after the first month-end close." : $"{new DateTime(last.Year, last.Month, 1):MMMM} close · healthy is 2–4%", Fonts.Xs, Palette.TextMuted)));
+        pulse.AddChild(new HSeparator());
+        void Line(string name, string value, Control? trend = null, string? tip = null)
         {
-            var box = Ui.VBox(6, Ui.Caption("Not sure what to do? Things you could say"));
-            foreach (var idea in ideas)
-            {
-                var b = Ui.Button("\u201c" + idea.Text + "\u201d", () => Game.OpenMeeting(idea.Attendees, idea.Text));
-                b.Alignment = HorizontalAlignment.Left;
-                b.TooltipText = "Opens the meeting room with this sentence ready. Press Enter to say it, or edit it first.";
-                box.AddChild(Ui.HBox(10, b, Ui.Label(idea.Why, 13, Palette.Muted)));
-            }
-            Body.AddChild(Ui.Card(box));
+            var r = Ui.HBox(8, Ui.Label(name, Fonts.Sm, Palette.TextSecondary), Ui.Spacer(), Ui.Num(value, Fonts.Base));
+            if (trend != null) { trend.CustomMinimumSize = new Vector2(84, 0); r.AddChild(trend); }
+            if (tip != null) r.TooltipText = tip;
+            pulse.AddChild(r);
         }
-
-        var row1 = new GridContainer { Columns = 4, SizeFlagsHorizontal = SizeFlags.ExpandFill };
-        row1.AddChild(Ui.Tile("Role", s.Player.Title, $"{s.Company.Name}"));
-        row1.AddChild(Ui.Tile("Date", s.CurrentDate.ToString("MMM d, yyyy"), $"Fiscal year ends {FinancialEngine.FiscalYearEnd(s, s.CurrentDate):MMM d, yyyy}"));
-        row1.AddChild(Ui.Tile("Operating margin", last == null ? "—" : last.OperatingMargin.ToString("P1"),
-            last == null ? "No month closed yet" : $"{new DateTime(last.Year, last.Month, 1):MMMM} close", last == null ? null : Palette.ForScore(last.OperatingMargin * 100, 2.5, 0)));
-        row1.AddChild(Ui.Tile("Cash reserves", M(f.Cash), $"≈ {(double)(f.Cash / Math.Max(1, (last?.Opex ?? 93_500_000m) / 30m)):0} days cash on hand"));
-        row1.AddChild(Ui.Tile("Available capital", M(f.TechCapitalBudgetRemaining), $"Technology capital remaining of {M(f.TechCapitalBudgetAnnual)} FY budget", f.TechCapitalBudgetRemaining < 0 ? Palette.Bad : null));
-        row1.AddChild(Ui.Tile("Board confidence", $"{s.Metrics.BoardConfidence:0}", "Moves with reviews, incidents and escalations", Palette.ForScore(s.Metrics.BoardConfidence)));
-        row1.AddChild(Ui.Tile("Employee morale", $"{s.Metrics.EmployeeMorale:0}", $"Technology team {tech.Morale:0}", Palette.ForScore(s.Metrics.EmployeeMorale)));
-        row1.AddChild(Ui.Tile("Organizational risk", $"{risk}", $"Sum of known open risk scores ({s.Risks.Count(r => r.Known && !r.Closed)} risks)", risk > 60 ? Palette.Bad : risk > 40 ? Palette.Warn : Palette.Good));
-        Tips(row1, "Your job and organization.", "Today's date in the game. Time only moves when you press Next day / week / month.",
-            "Operating income ÷ revenue for the last closed month. Hospitals run on thin margins; below 0% means losing money.",
-            "Money in the bank. Days cash on hand = how long the organization could pay its bills.",
-            "Capital money left this fiscal year for technology purchases. Spending above it needs a CFO exception.",
-            "How much the board trusts the leadership team. Very low confidence can end your tenure.",
-            "How motivated staff are. Cuts, overload and incidents lower it.",
-            "Total score of all known open risks. Unknown risks are not counted — some are only found by investigating.");
+        decimal dailyOpex = (last?.Opex ?? 93_500_000m) / 30m;
+        Line("Cash", SimulationEngine.Money(f.Cash), prev != null && now != null ? Ui.Trend((double)((now.Cash - prev.Cash) / 1_000_000m), true, "+0.0;-0.0", "M") : null,
+            $"About {(double)(f.Cash / Math.Max(1, dailyOpex)):0} days of operating costs on hand.");
+        Line("Tech capital left", SimulationEngine.Money(f.TechCapitalBudgetRemaining), null, $"Remaining from the {SimulationEngine.Money(f.TechCapitalBudgetAnnual)} technology capital budget this fiscal year.");
+        decimal approved = s.Savings.Where(v => v.Source == "budget_cut" && v.Recurring && v.Status != SavingsStatus.Reversed).Sum(v => v.AnnualAmount);
+        Line("Savings vs target", $"{SimulationEngine.Money(approved)} / {SimulationEngine.Money(PerformanceEngine.SavingsTarget)}", null, "Recurring savings approved toward the CFO's target.");
+        pulse.AddChild(Ui.Bar((double)approved, (double)PerformanceEngine.SavingsTarget, approved >= PerformanceEngine.SavingsTarget ? Palette.Success : Palette.Accent));
+        var pulseCard = Ui.Card(pulse, null, null, 20);
+        pulseCard.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        pulseCard.CustomMinimumSize = new Vector2(340, 0);
+        row1.AddChild(pulseCard);
         Body.AddChild(row1);
 
+        // ── Row 2: KPI strip with trend vs last month and sparkline
+        double[] Series(Func<MetricSnapshot, double> sel) => hist.Select(sel).ToArray();
+        Control? D(Func<MetricSnapshot, double> sel, bool higherBetter) => prev != null && now != null ? Ui.Trend(sel(now) - sel(prev), higherBetter) : null;
         var t = s.Technology;
-        var row2 = new GridContainer { Columns = 4, SizeFlagsHorizontal = SizeFlags.ExpandFill };
-        row2.AddChild(Ui.Tile("EHR recovery time", $"{t.ReportedRtoHours:0} h", $"Documented · target {t.TargetRtoHours:0} h{(t.HasSecondarySite ? " · secondary site live" : "")}", t.ReportedRtoHours <= t.TargetRtoHours ? Palette.Good : Palette.Bad));
-        row2.AddChild(Ui.Tile("Active projects", $"{s.Projects.Count(p => p.Status is ProjectStatus.Active or ProjectStatus.OnHold)}", string.Join(", ", s.Projects.Where(p => p.Status != ProjectStatus.Completed).Select(p => $"{p.Name} {p.Progress:P0}"))));
-        row2.AddChild(Ui.Tile("Pending decisions", $"{s.Proposals.Count(p => p.Status == ProposalStatus.Pending)}", $"{s.Proposals.Count(p => p.Status == ProposalStatus.AwaitingApproval)} awaiting CFO/CEO"));
-        decimal approved = s.Savings.Where(v => v.Source == "budget_cut" && v.Recurring && v.Status != SavingsStatus.Reversed).Sum(v => v.AnnualAmount);
-        row2.AddChild(Ui.Tile("Savings vs target", $"{M(approved)}", $"Recurring approved toward {M(PerformanceEngine.SavingsTarget)} · realized {M(s.Savings.Sum(v => v.RealizedToDate))}", approved >= PerformanceEngine.SavingsTarget ? Palette.Good : Palette.Warn));
-        Tips(row2, "How long it would take to recover the EHR after a disaster, as currently documented. It may not be accurate until someone tests it.",
-            "Approved projects in progress.", "Proposals waiting for your decision.", "Run-rate savings you have approved toward the CFO's target.");
-        Body.AddChild(row2);
+        var kpis = Ui.HBox(16);
+        kpis.AddChild(Ui.Tile("Board confidence", $"{s.Metrics.BoardConfidence:0}", "Moves with reviews, incidents and escalations", Palette.ForScore(s.Metrics.BoardConfidence),
+            D(h => h.BoardConfidence, true), Series(h => h.BoardConfidence), "How much the board trusts the leadership team. Very low confidence can end your tenure."));
+        kpis.AddChild(Ui.Tile("Employee morale", $"{s.Metrics.EmployeeMorale:0}", $"Technology team {tech.Morale:0}", Palette.ForScore(s.Metrics.EmployeeMorale),
+            D(h => h.Morale, true), Series(h => h.Morale), "Cuts, overload and incidents lower it."));
+        kpis.AddChild(Ui.Tile("Known risk", $"{risk}", $"{s.Risks.Count(r => r.Known && !r.Closed)} open risks in the register", risk > 60 ? Palette.Danger : risk > 40 ? Palette.Warning : Palette.Success,
+            D(h => h.AssessedRisk, false), Series(h => h.AssessedRisk), "Total score of known open risks. Some risks are only discovered by investigating."));
+        kpis.AddChild(Ui.Tile("EHR recovery time", $"{t.ReportedRtoHours:0} h", $"Documented · target {t.TargetRtoHours:0} h{(t.HasSecondarySite ? " · secondary site live" : "")}",
+            t.ReportedRtoHours <= t.TargetRtoHours ? Palette.Success : Palette.Danger, null, null,
+            "How long recovering the EHR after a disaster would take, as currently documented. It may be wrong until someone tests it."));
+        Body.AddChild(kpis);
 
-        // Upcoming: assignments due, approvals, scheduled items.
+        // ── Row 3: ideas (wide) + upcoming timeline (narrow)
+        var row3 = Ui.HBox(16);
+        var ideas = Guidance.Suggestions(s).Where(x => !x.Text.EndsWith('?')).Take(4).ToList();
+        var box = Ui.VBox(8, Ui.Caption("Things you could say"));
+        if (ideas.Count == 0) box.AddChild(Ui.Empty("No suggestions right now.", "You've covered the obvious moves. Ask your team what they're seeing in the Meeting Room.", "chats-circle"));
+        foreach (var idea in ideas)
+        {
+            var b = Ui.Button("\u201c" + idea.Text + "\u201d", () => Game.OpenMeeting(idea.Attendees, idea.Text), icon: "chats-circle");
+            b.Alignment = HorizontalAlignment.Left;
+            b.TooltipText = idea.Why + " — opens the meeting room with this sentence ready to send.";
+            b.AddThemeFontOverride("font", Fonts.Sans);
+            box.AddChild(b);
+        }
+        var ideasCard = Ui.Card(box, null, null, 20);
+        ideasCard.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        ideasCard.SizeFlagsStretchRatio = 2.1f;
+        row3.AddChild(ideasCard);
+
         var upcoming = new List<(DateOnly, string)>();
-        upcoming.AddRange(s.Assignments.Where(a => a.Status is AssignmentStatus.Active or AssignmentStatus.Overdue).Select(a => (a.Due, $"{a.Assignee}: {a.Subject}{(a.Status == AssignmentStatus.Overdue ? " (OVERDUE)" : "")}")));
-        upcoming.AddRange(s.Proposals.Where(p => p.Status == ProposalStatus.AwaitingApproval && p.ApprovalDueDate != null).Select(p => (p.ApprovalDueDate!.Value, $"CFO/CEO decision: {p.Title}")));
-        upcoming.AddRange(s.Contracts.Where(c => !c.Renewed).Select(c => (c.RenewalDate, $"{c.Vendor} contract renewal{(c.Negotiated ? " (negotiated)" : " — not negotiated")}")));
-        upcoming.AddRange(s.Projects.Where(p => p.Status != ProjectStatus.Completed).Select(p => (p.PlannedEndDate, $"Planned go-live: {p.Name}")));
-        var q = Ui.VBox(4, Ui.Caption("Upcoming"));
-        foreach (var (d, text) in upcoming.OrderBy(u => u.Item1).Take(8))
-            q.AddChild(Ui.HBox(12, Ui.Label(d.ToString("MMM d"), 14, d < s.CurrentDate ? Palette.Bad : Palette.Accent), Ui.Label(text, 14, null, wrap: true)));
-        if (upcoming.Count == 0) q.AddChild(Ui.Label("Nothing scheduled.", 14, Palette.Muted));
-
-        var inc = s.Incidents.FirstOrDefault(i => i.Status == IncidentStatus.Active);
-        var recent = Ui.VBox(4, Ui.Caption("Latest messages"));
-        if (inc != null) recent.AddChild(Ui.Label($"ACTIVE INCIDENT: {inc.Title} — direct the response in the Meeting Room or Decisions.", 14, Palette.Bad, wrap: true));
-        foreach (var m in s.Inbox.TakeLast(6).Reverse())
-            recent.AddChild(Ui.Label($"{m.Date:MMM d} · {m.Subject}", 14, m.Read ? Palette.Muted : Palette.Text, wrap: true));
-        var cols = Ui.HBox(12, Ui.Card(q), Ui.Card(recent));
-        foreach (var c in cols.GetChildren().OfType<Control>()) c.SizeFlagsHorizontal = SizeFlags.ExpandFill;
-        Body.AddChild(cols);
+        upcoming.AddRange(s.Assignments.Where(a => a.Status is AssignmentStatus.Active or AssignmentStatus.Overdue).Select(a => (a.Due, $"{a.Assignee}: {a.Subject}{(a.Status == AssignmentStatus.Overdue ? " (late)" : "")}")));
+        upcoming.AddRange(s.Proposals.Where(p => p.Status == ProposalStatus.AwaitingApproval && p.ApprovalDueDate != null).Select(p => (p.ApprovalDueDate!.Value, $"CFO/CEO decide: {p.Title}")));
+        upcoming.AddRange(s.Contracts.Where(c => !c.Renewed).Select(c => (c.RenewalDate, $"{c.Vendor} renewal{(c.Negotiated ? " (negotiated)" : "")}")));
+        upcoming.AddRange(s.Projects.Where(p => p.Status != ProjectStatus.Completed).Select(p => (p.PlannedEndDate, $"Go-live: {p.Name}")));
+        var q = Ui.VBox(8, Ui.Caption("Coming up"));
+        if (upcoming.Count == 0) q.AddChild(Ui.Empty("Nothing scheduled.", "Delegated work, approvals and go-lives will appear here."));
+        foreach (var (d, text) in upcoming.OrderBy(u => u.Item1).Take(6))
+        {
+            var date = Ui.Num(d.ToString("MMM dd"), Fonts.Sm, d < s.CurrentDate ? Palette.Danger : Palette.Accent);
+            date.CustomMinimumSize = new Vector2(60, 0);
+            q.AddChild(Ui.HBox(12, date, Ui.Label(text, Fonts.Sm, Palette.TextPrimary, wrap: true)));
+        }
+        var upCard = Ui.Card(q, null, null, 20);
+        upCard.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        upCard.CustomMinimumSize = new Vector2(340, 0);
+        row3.AddChild(upCard);
+        Body.AddChild(row3);
     }
 }
 
@@ -261,7 +284,7 @@ public partial class ProposalsView : StateView
         foreach (var p in s.Proposals.Where(p => p.Status is ProposalStatus.Pending or ProposalStatus.Deferred or ProposalStatus.AwaitingApproval))
         {
             var v = Ui.VBox(6);
-            v.AddChild(Ui.HBox(10, Ui.Label(p.Title, 18), Ui.Spacer(), Ui.Label(p.Status == ProposalStatus.Deferred ? $"Deferred until {p.DeferredUntil:MMM d}" : p.Status == ProposalStatus.AwaitingApproval ? $"With CFO/CEO — decision {p.ApprovalDueDate:MMM d}" : "Pending", 13, Palette.Muted)));
+            v.AddChild(Ui.HBox(10, Ui.Label(p.Title, Fonts.Lg, font: Fonts.SansSemi), Ui.Spacer(), Ui.Label(p.Status == ProposalStatus.Deferred ? $"Deferred until {p.DeferredUntil:MMM d}" : p.Status == ProposalStatus.AwaitingApproval ? $"With CFO/CEO — decision {p.ApprovalDueDate:MMM d}" : "Pending", 13, Palette.Muted)));
             v.AddChild(Ui.Label(p.Summary, 14, Palette.Muted, wrap: true));
             v.AddChild(Ui.Label($"Sponsor: {Roles.Label(p.Sponsor)}   ·   Capital {M(p.Capex)}   ·   Operating {M(p.AnnualOpex)}/yr   ·   ~{p.DurationDays} days" +
                                 (ApproveProposalHandler.RequiresExecutiveApproval(s, p) ? "   ·   too big for you alone: approving sends it to the CFO and CEO" : "   ·   you can approve this yourself"), 14, null, wrap: true));
@@ -308,12 +331,12 @@ public partial class ProjectsView : StateView
     protected override void Build(GameState s)
     {
         Body.AddChild(Ui.Caption("Project portfolio"));
-        if (s.Projects.Count == 0) Body.AddChild(Ui.Label("No approved projects yet.", 14, Palette.Muted));
+        if (s.Projects.Count == 0) Body.AddChild(Ui.Card(Ui.Empty("No approved projects yet.", "Approve a proposal in Decisions and it becomes a project here, with progress, milestones and spend.", "kanban")));
         foreach (var p in s.Projects)
         {
             var v = Ui.VBox(6);
             var color = p.Status == ProjectStatus.OnHold ? Palette.Warn : p.Status == ProjectStatus.Completed ? Palette.Good : Palette.Accent;
-            v.AddChild(Ui.HBox(10, Ui.Label(p.Name, 17), Ui.Spacer(), Ui.Label($"{p.Status}  ·  owner {Roles.Label(p.Owner)}", 13, color)));
+            v.AddChild(Ui.HBox(10, Ui.Label(p.Name, Fonts.Lg, font: Fonts.SansSemi), Ui.Spacer(), Ui.Label($"{p.Status}  ·  owner {Roles.Label(p.Owner)}", 13, color)));
             v.AddChild(Ui.HBox(10, Ui.Bar(p.Progress * 100, 100, color), Ui.Label($"{p.Progress:P0}", 14)));
             v.AddChild(Ui.Label($"Capital {M(p.SpentCapex)} of {M(p.BudgetCapex)}  ·  started {p.StartDate:MMM d}  ·  planned go-live {p.PlannedEndDate:MMM d, yyyy}" +
                                 (p.ActualEndDate is { } e ? $"  ·  went live {e:MMM d}" : "") + $"  ·  run cost {M(p.AnnualOpex)}/yr", 13, Palette.Muted, wrap: true));
@@ -347,7 +370,7 @@ public partial class FinanceView : StateView
         Body.AddChild(Ui.Label($"Balance sheet: cash {M(f.Cash)} + net PP&E {M(f.NetPpe)} = debt {M(f.Debt)} + equity {M(f.Equity)}. Every figure is derived from the ledger.", 14, Palette.Muted, wrap: true));
         var st = f.Statements.TakeLast(12).Reverse().ToList();
         Body.AddChild(Ui.Card(Ui.VBox(6, Ui.Caption("Monthly income statements"),
-            st.Count == 0 ? Ui.Label("No month has closed yet. Statements are produced at each month-end close.", 14, Palette.Muted)
+            st.Count == 0 ? Ui.Empty("No month has closed yet.", "Statements appear at each month-end close. Advance time to reach the end of the month.", "chart-line-up")
             : Ui.Table(new[] { "Month", "Revenue", "Operating exp.", "Technology", "Depreciation", "Op. margin", "Net income", "Capex", "Cash" },
                 st.Select(m => new[] { new DateTime(m.Year, m.Month, 1).ToString("MMMM yyyy"), M(m.Revenue), M(m.Opex), M(m.TechOpex), M(m.Depreciation), m.OperatingMargin.ToString("P1"), M(m.NetIncome), M(m.Capex), M(m.ClosingCash) }),
                 (r, c) => c == 6 && st[r].NetIncome < 0 ? Palette.Bad : null))));
@@ -359,7 +382,7 @@ public partial class FinanceView : StateView
 
         var sv = s.Savings.ToList();
         Body.AddChild(Ui.Card(Ui.VBox(6, Ui.Caption("Savings tracker — proposed ≠ approved ≠ realized"),
-            sv.Count == 0 ? Ui.Label("No savings initiatives yet.", 14, Palette.Muted)
+            sv.Count == 0 ? Ui.Empty("No savings yet.", "Cut a discretionary budget line in a meeting (e.g. \"Cut $100k from travel\"), or ask for a cost review first to find realistic savings.", "chart-line-up")
             : Ui.Table(new[] { "Initiative", "Annual", "Type", "Status", "Effective", "Realized to date" },
                 sv.Select(x => new[] { $"{tech.BudgetLines.FirstOrDefault(l => l.Id == x.BudgetLineId)?.Name ?? x.BudgetLineId} ({x.Source.Replace('_', ' ')})", M(x.AnnualAmount), x.Recurring ? "recurring" : "one-time", x.Status.ToString(), x.EffectiveDate.ToString("MMM yyyy"), M(x.RealizedToDate) })))));
 
@@ -385,7 +408,7 @@ public partial class RiskView : StateView
         {
             var color = r.Closed ? Palette.Good : r.Score >= 15 ? Palette.Bad : r.Score >= 9 ? Palette.Warn : Palette.Muted;
             Body.AddChild(Ui.Card(Ui.VBox(4,
-                Ui.HBox(10, Ui.Label(r.Title, 16), Ui.Spacer(), Ui.Label(r.Closed ? "CLOSED" : $"Score {r.Score}  (L{r.Likelihood} × I{r.Impact})", 14, color)),
+                Ui.HBox(10, Ui.Label(r.Title, Fonts.Base, font: Fonts.SansSemi), Ui.Spacer(), Ui.Label(r.Closed ? "CLOSED" : $"Score {r.Score}  (L{r.Likelihood} × I{r.Impact})", 14, color)),
                 Ui.Label(r.Description, 14, Palette.Muted, wrap: true),
                 Ui.Label($"Owner: {Roles.Label(r.Owner)}  ·  identified {r.Identified:MMM d, yyyy}", 12, Palette.Muted))));
         }
@@ -413,10 +436,9 @@ public partial class PeopleView : StateView
             var v = Ui.VBox(4);
             // Placeholder portrait: initials disc. (Final art is a Phase 4 deliverable.)
             var initials = string.Concat(x.Name.Replace("Dr. ", "").Split(' ').Where(w => w.Length > 0).Take(2).Select(w => w[0]));
-            var portrait = Ui.Card(Ui.Label(initials, 22, Palette.Text), Palette.AccentDim, Palette.Accent);
-            portrait.CustomMinimumSize = new Vector2(56, 56);
-            v.AddChild(Ui.HBox(12, portrait, Ui.VBox(2, Ui.Label(x.Name, 17), Ui.Label(x.Title, 13, Palette.Muted),
-                Ui.Label(x.ReportsTo == s.Player.Role ? "Reports to you" : x.Role == ExecRole.Vendor ? "External" : $"Reports to {Roles.Label(x.ReportsTo)}", 12, x.ReportsTo == s.Player.Role ? Palette.Accent : Palette.Muted))));
+            var portrait = Ui.Avatar(x.Name, 56);
+            v.AddChild(Ui.HBox(16, portrait, Ui.VBox(2, Ui.Label(x.Name, Fonts.Lg, font: Fonts.SansSemi), Ui.Label(x.Title, Fonts.Sm, Palette.TextSecondary),
+                Ui.Label(x.ReportsTo == s.Player.Role ? "Reports to you" : x.Role == ExecRole.Vendor ? "External" : x.ReportsTo == ExecRole.None ? "Reports to the board" : $"Reports to {Roles.Label(x.ReportsTo)}", Fonts.Xs, x.ReportsTo == s.Player.Role ? Palette.Accent : Palette.TextMuted))));
             v.AddChild(Ui.Label(x.Background, 13, Palette.Muted, wrap: true));
             v.AddChild(Ui.Label("Priorities: " + string.Join(", ", x.Priorities), 13, null, wrap: true));
             var g = new GridContainer { Columns = 2, SizeFlagsHorizontal = SizeFlags.ExpandFill };
@@ -462,7 +484,7 @@ public partial class PerformanceView : StateView
             $"{d.Summary}{(d.Evaluation.Notes.Count > 0 ? "\n   " + string.Join(" ", d.Evaluation.Notes) : "")}{(d.OutcomeNotes.Count > 0 ? "\n   Outcome: " + string.Join(" ", d.OutcomeNotes) : "")}",
             d.Date.ToString("MMM d"), $"{d.Evaluation.Evidence:0}", $"{d.Evaluation.Stakeholders:0}", $"{d.Evaluation.Risk:0}", $"{d.Evaluation.Overall:0}", d.OutcomeScore is double o ? $"{o:0}" : "pending",
         }).ToList();
-        Body.AddChild(Ui.Card(rows.Count == 0 ? Ui.Label("No decisions recorded yet.", 14, Palette.Muted)
+        Body.AddChild(Ui.Card(rows.Count == 0 ? Ui.Empty("No decisions recorded yet.", "Decisions you make in meetings or on the Decisions screen are scored here — first on the evidence you had, later on how they turned out.", "medal")
             : Ui.Table(new[] { "Decision", "Date", "Evidence", "Stakeholders", "Risk", "Quality", "Outcome" }, rows)));
     }
 }

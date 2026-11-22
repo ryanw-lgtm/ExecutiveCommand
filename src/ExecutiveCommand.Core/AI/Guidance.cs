@@ -45,7 +45,7 @@ public static class Guidance
         foreach (var m in s.Inbox.Where(m => !m.Read && (m.Kind is MessageKind.Escalation or MessageKind.Review
                      || (m.Kind == MessageKind.Report && (m.Subject.StartsWith("Report:") || m.Subject.StartsWith("Post-implementation") || m.Subject.StartsWith("Not approved") || m.Subject.StartsWith("Approved"))))).TakeLast(4))
             items.Add(new(m.Kind == MessageKind.Escalation ? AttentionLevel.Important : AttentionLevel.Info,
-                $"New {m.Kind.ToString().ToLowerInvariant()}: {m.Subject}", "Read", "Inbox", RelatedId: m.Id));
+                m.Subject.StartsWith("Report: ") ? $"New report — {m.Subject[8..]}" : $"New {m.Kind.ToString().ToLowerInvariant()} — {m.Subject}", "Read", "Inbox", RelatedId: m.Id));
 
         int pending = s.Proposals.Count(p => p.Status == ProposalStatus.Pending);
         if (pending > 0)

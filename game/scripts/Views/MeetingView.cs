@@ -1,3 +1,4 @@
+using System.Text;
 using ExecutiveCommand.Core.Actions;
 using ExecutiveCommand.Core.AI;
 using ExecutiveCommand.Core.Model;
@@ -7,9 +8,9 @@ using Godot;
 namespace ExecutiveCommand.Game.Views;
 
 /// <summary>
-/// The meeting room: choose attendees, speak freely, see how the organization interpreted you, and
-/// confirm high-impact decisions. Dialogue is labeled when AI-generated; engine results are shown
-/// separately so the player can always tell what actually happened.
+/// The meeting room as a chat thread. You speak freely; executives answer one at a time at their own
+/// pace; what the organization actually recorded appears as a distinct card, separate from dialogue.
+/// AI-generated lines are labeled.
 /// </summary>
 public partial class MeetingView : VBoxContainer, IGameView
 {
@@ -17,84 +18,25 @@ public partial class MeetingView : VBoxContainer, IGameView
     private readonly GameScreen _game = null!;
     private MeetingService? _meeting;
     private readonly Dictionary<ExecRole, CheckBox> _attendees = new();
-    private RichTextLabel _log = null!;
+    private ScrollContainer _scroll = null!;
+    private VBoxContainer _thread = null!;
+    private HBoxContainer _participants = null!;
     private LineEdit _input = null!;
     private Button _send = null!, _cancelGen = null!;
-    private HBoxContainer _confirmBar = null!;
     private PanelContainer _confirmCard = null!;
-    private Label _confirmText = null!, _thinking = null!, _who = null!;
+    private Label _confirmText = null!, _thinking = null!;
+    private HFlowContainer _ideas = null!;
+    private Control? _typingBubble;
+    private Label? _typingLabel;
+    private Button _skip = null!;
+    private bool _skipRequested;
+    private string _typingName = "";
+    private double _dotClock;
     private CancellationTokenSource? _cts;
     private GameState? _boundState;
+    private readonly StringBuilder _transcript = new();
 
     public bool HasPendingConfirmation => _meeting?.HasPendingConfirmation == true;
-
-    public MeetingView() { }
-
-    public MeetingView(GameScreen game)
-    {
-        _game = game;
-        SizeFlagsVertical = SizeFlags.ExpandFill;
-        SizeFlagsHorizontal = SizeFlags.ExpandFill;
-        AddChild(Ui.Heading("Meeting Room"));
-        AddChild(Ui.Label("Talk naturally. Say who should do what, by when, and with how much money. Nothing happens until you see \u25b6 RECORDED.", 14, Palette.Muted, wrap: true));
-
-        // Who is in the room: one-click presets, or fine-tune with the checkboxes.
-        var presets = Ui.HBox(8, Ui.Label("Quick meetings:", 14, Palette.Muted));
-        foreach (var (label, roles, tip) in Presets)
-        {
-            var b = Ui.Button(label, () => OpenWith(roles, null));
-            b.TooltipText = tip;
-            presets.AddChild(b);
-        }
-        var pick = Ui.HBox(10, Ui.Label("Or choose:", 14, Palette.Muted));
-        foreach (var r in Roles.Addressable)
-        {
-            var cb = new CheckBox { Text = Roles.Label(r) == "Enterprise Architecture Director" ? "EA Director" : Roles.Label(r), ButtonPressed = r is ExecRole.CIO or ExecRole.CISO or ExecRole.EADirector };
-            _attendees[r] = cb;
-            pick.AddChild(cb);
-        }
-        pick.AddChild(Ui.Spacer());
-        pick.AddChild(Ui.Button("Start meeting", StartMeeting, primary: true));
-        AddChild(Ui.Card(Ui.VBox(8, presets, pick)));
-
-        _who = Ui.Label("", 13, Palette.Muted, wrap: true);
-        AddChild(_who);
-
-        _log = new RichTextLabel { BbcodeEnabled = true, ScrollFollowing = true, SizeFlagsVertical = SizeFlags.ExpandFill, SelectionEnabled = true, CustomMinimumSize = new Vector2(0, 260) };
-        _log.AddThemeFontSizeOverride("normal_font_size", 16);
-        _log.AddThemeFontSizeOverride("bold_font_size", 16);
-        AddChild(_log);
-
-        // "Raymond is typing…" — replies arrive one at a time at each executive's own pace.
-        _typing = Ui.Label("", 14, Palette.Muted);
-        _skip = Ui.Button("Skip", () => _skipRequested = true);
-        _skip.TooltipText = "Show all replies now. Reply pacing can be changed in Settings.";
-        _typingRow = Ui.HBox(10, _typing, Ui.Spacer(), _skip);
-        _typingRow.Visible = false;
-        AddChild(_typingRow);
-
-        _confirmText = Ui.Label("", 15, Palette.Warn, wrap: true);
-        _confirmBar = Ui.HBox(10, _confirmText, Ui.Button("Cancel", () => _ = Confirm(false)), Ui.Button("Confirm decision", () => _ = Confirm(true), primary: true));
-        _confirmCard = Ui.Card(_confirmBar, Palette.SurfaceRaised, Palette.Warn);
-        _confirmCard.Visible = false;
-        AddChild(_confirmCard);
-
-        // Clickable ideas based on the current situation. Clicking fills the box so you can edit before sending.
-        _ideas = new HFlowContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
-        _ideas.AddThemeConstantOverride("h_separation", 6);
-        _ideas.AddThemeConstantOverride("v_separation", 6);
-        AddChild(Ui.HBox(8, Ui.Label("Ideas:", 13, Palette.Muted), _ideas));
-
-        _thinking = Ui.Label("", 13, Palette.Muted);
-        _input = new LineEdit { PlaceholderText = "Type what you want to say, then press Enter — or click an idea above", SizeFlagsHorizontal = SizeFlags.ExpandFill, MaxLength = 1000, CustomMinimumSize = new Vector2(0, 42) };
-        _input.AddThemeFontSizeOverride("font_size", 16);
-        _input.TextSubmitted += _text => _ = Send();
-        _send = Ui.Button("Say  \u23ce", () => _ = Send(), primary: true);
-        _cancelGen = Ui.Button("Stop", () => _cts?.Cancel());
-        _cancelGen.Visible = false;
-        AddChild(Ui.HBox(8, _input, _send, _cancelGen));
-        AddChild(_thinking);
-    }
 
     private static readonly (string Label, ExecRole[] Roles, string Tip)[] Presets =
     {
@@ -105,51 +47,91 @@ public partial class MeetingView : VBoxContainer, IGameView
         ("Vendor meeting", new[] { ExecRole.Vendor, ExecRole.CIO }, "The EHR vendor's account executive"),
     };
 
-    private HFlowContainer _ideas = null!;
-    private Label _typing = null!;
-    private Button _skip = null!;
-    private HBoxContainer _typingRow = null!;
-    private bool _skipRequested;
-    private string _typingName = "";
-    private double _dotClock;
+    public MeetingView() { }
+
+    public MeetingView(GameScreen game)
+    {
+        _game = game;
+        SizeFlagsVertical = SizeFlags.ExpandFill;
+        SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        AddThemeConstantOverride("separation", 12);
+
+        AddChild(Ui.HBox(16, Ui.Heading("Meeting Room", 28), Ui.Spacer(),
+            Ui.Label("Say who should do what, by when, with how much money.", Fonts.Sm, Palette.TextSecondary)));
+
+        // Who is in the room.
+        var presets = Ui.HBox(8, Ui.Caption("Quick meetings"));
+        foreach (var (label, roles, tip) in Presets)
+        {
+            var b = Ui.Button(label, () => OpenWith(roles, null));
+            b.TooltipText = tip;
+            presets.AddChild(b);
+        }
+        var pick = Ui.HBox(6, Ui.Caption("Or choose"));
+        foreach (var r in Roles.Addressable)
+        {
+            var cb = new CheckBox { Text = r == ExecRole.EADirector ? "EA Director" : r == ExecRole.Vendor ? "Vendor" : r.ToString(), ButtonPressed = r is ExecRole.CIO or ExecRole.CISO or ExecRole.EADirector };
+            _attendees[r] = cb;
+            pick.AddChild(cb);
+        }
+        pick.AddChild(Ui.Spacer());
+        pick.AddChild(Ui.Button("Start meeting", StartMeeting, icon: "arrow-right"));
+        AddChild(Ui.Card(Ui.VBox(10, presets, pick), null, null, 14));
+
+        _participants = Ui.HBox(20);
+        AddChild(_participants);
+
+        // The thread.
+        _thread = Ui.VBox(14);
+        _scroll = Ui.Scroll(_thread);
+        var threadCard = Ui.Card(_scroll, Palette.BgSunken, Palette.Border, 20);
+        threadCard.SizeFlagsVertical = SizeFlags.ExpandFill;
+        threadCard.CustomMinimumSize = new Vector2(0, 240);
+        AddChild(threadCard);
+
+        // Confirmation for high-impact decisions.
+        _confirmText = Ui.Label("", Fonts.Base, Palette.TextPrimary, wrap: true);
+        var confirmRow = Ui.HBox(12, Ui.Icon("warning-circle", 22, Palette.Warning), _confirmText,
+            Ui.Button("Cancel", () => _ = Confirm(false)), Ui.Button("Confirm decision", () => _ = Confirm(true), primary: true, icon: "check-circle"));
+        _confirmCard = Ui.AccentCard(confirmRow, Palette.Warning);
+        _confirmCard.Visible = false;
+        AddChild(_confirmCard);
+
+        // Ideas: clicking fills the box so you can edit before sending.
+        _ideas = new HFlowContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        _ideas.AddThemeConstantOverride("h_separation", 8);
+        _ideas.AddThemeConstantOverride("v_separation", 8);
+        AddChild(Ui.HBox(12, Ui.Caption("Ideas"), _ideas));
+
+        _thinking = Ui.Label("", Fonts.Xs, Palette.TextMuted);
+        _input = new LineEdit { PlaceholderText = "Type what you want to say and press Enter — or pick an idea above", SizeFlagsHorizontal = SizeFlags.ExpandFill, MaxLength = 1000, CustomMinimumSize = new Vector2(0, 48) };
+        _input.AddThemeFontSizeOverride("font_size", Fonts.Base);
+        _input.TextSubmitted += _text => _ = Send();
+        _send = Ui.Button("Say", () => _ = Send(), primary: true, icon: "arrow-right");
+        _send.CustomMinimumSize = new Vector2(96, 48);
+        _skip = Ui.Button("Skip", () => _skipRequested = true);
+        _skip.TooltipText = "Show all replies now (reply pacing can be changed in Settings)";
+        _skip.Visible = false;
+        _cancelGen = Ui.Button("Stop", () => _cts?.Cancel());
+        _cancelGen.Visible = false;
+        AddChild(Ui.HBox(8, _input, _skip, _cancelGen, _send));
+        AddChild(_thinking);
+    }
 
     public override void _Process(double delta)
     {
-        if (!_typingRow.Visible) return;
+        if (_typingLabel == null || !IsInstanceValid(_typingLabel)) return;
         _dotClock += delta;
-        int dots = (int)(_dotClock * 3) % 4;
-        _typing.Text = $"{_typingName} is typing{new string('.', dots)}";
+        _typingLabel.Text = $"{_typingName} is typing" + new string('.', (int)(_dotClock * 3) % 4);
     }
 
-    private async Task WaitAsync(double seconds)
+    public void Refresh(GameSession session)
     {
-        double end = Time.GetTicksMsec() / 1000.0 + seconds;
-        while (!_skipRequested && Time.GetTicksMsec() / 1000.0 < end && IsInsideTree())
-            await ToSignal(GetTree().CreateTimer(0.05), SceneTreeTimer.SignalName.Timeout);
-    }
-
-    /// <summary>Reveal replies one by one with a typing indicator, then the recorded outcome.</summary>
-    private async Task RenderAsync(MeetingResponse r)
-    {
-        var pacing = (ReplyPacing)_game.Session.Settings.ReplyPacing;
-        _skipRequested = false;
-        var s = _game.Session.State;
-        foreach (var reply in r.Replies)
-        {
-            if (pacing != ReplyPacing.Off && !_skipRequested && IsInsideTree() && s.TryExec(reply.Speaker) is { } x)
-            {
-                var t = TypingPace.For(x, reply.Text, pacing);
-                _typingName = reply.Name.StartsWith("Dr. ") ? "Dr. " + reply.Name.Split(' ')[^1] : reply.Name.Split(' ')[0];
-                _dotClock = 0;
-                await WaitAsync(t.ThinkSeconds);          // thinking: no indicator yet
-                _typingRow.Visible = true;
-                await WaitAsync(t.TypeSeconds);           // typing
-                _typingRow.Visible = false;
-            }
-            AppendReply(reply);
-        }
-        _typingRow.Visible = false;
-        AppendOutcome(r);
+        if (_boundState != session.State) { _meeting = null; _boundState = session.State; Ui.Clear(_thread); }
+        if (_meeting == null) StartMeeting();
+        _confirmCard.Visible = _meeting?.HasPendingConfirmation == true;
+        _confirmText.Text = _meeting?.PendingConfirmationPrompt ?? "";
+        RefreshIdeas();
     }
 
     /// <summary>Open a meeting with specific people, optionally with a sentence ready to send.</summary>
@@ -166,56 +148,166 @@ public partial class MeetingView : VBoxContainer, IGameView
     {
         Ui.Clear(_ideas);
         if (!_game.Session.HasGame) return;
-        foreach (var sug in Guidance.Suggestions(_game.Session.State).Take(7))
+        foreach (var sug in Guidance.Suggestions(_game.Session.State).Take(6))
         {
             var chip = Ui.Button(sug.Text, () =>
             {
-                // If the right people aren't in the room, bring them in.
                 if (_meeting != null && !sug.Attendees.Any(r => _meeting.Attendees.Contains(r))) OpenWith(sug.Attendees, sug.Text);
                 else { _input.Text = sug.Text; _input.CaretColumn = sug.Text.Length; _input.GrabFocus(); }
             });
             chip.TooltipText = sug.Why + " — click to put it in the box, then press Enter";
-            chip.AddThemeFontSizeOverride("font_size", 13);
+            chip.AddThemeFontOverride("font", Fonts.Sans);
+            chip.AddThemeFontSizeOverride("font_size", Fonts.Sm);
+            chip.CustomMinimumSize = new Vector2(0, 32);
+            chip.AddThemeStyleboxOverride("normal", GameTheme.Box(Palette.BgElevated, Palette.Border, 16, 12));
+            chip.AddThemeStyleboxOverride("hover", GameTheme.Box(Palette.BgHover, Palette.Accent, 16, 12));
             _ideas.AddChild(chip);
         }
-    }
-
-    public void Refresh(GameSession session)
-    {
-        // A loaded game has a different state object: meetings do not carry across.
-        if (_boundState != session.State) { _meeting = null; _boundState = session.State; _log.Clear(); }
-        if (_meeting == null) StartMeeting();
-        _confirmCard.Visible = _meeting?.HasPendingConfirmation == true;
-        _confirmText.Text = _meeting?.PendingConfirmationPrompt ?? "";
-        RefreshIdeas();
     }
 
     private void StartMeeting()
     {
         var s = _game.Session.State;
         var roles = _attendees.Where(kv => kv.Value.ButtonPressed).Select(kv => kv.Key).ToList();
-        if (roles.Count == 0) { _game.Toast("Choose at least one attendee.", Palette.Warn); return; }
+        if (roles.Count == 0) { _game.Toast("Choose at least one attendee.", Palette.Warning); return; }
         _meeting = new MeetingService(_game.Session.Engine!, roles, _game.Session.Llm);
-        _log.Clear();
-        _log.AppendText($"[color={Palette.Hex(Palette.Muted)}]{s.CurrentDate:dddd, MMMM d} — meeting with {string.Join(", ", roles.Select(r => s.Exec(r).Name))}[/color]\n\n");
-        _who.Text = string.Join("   ·   ", roles.Select(r => { var x = s.Exec(r); return $"{x.Name} — {x.Title}{(x.ReportsTo == s.Player.Role ? " (reports to you)" : "")}"; }));
+        Ui.Clear(_thread);
+        _transcript.Clear();
+        Ui.Clear(_participants);
+        foreach (var r in roles)
+        {
+            var x = s.Exec(r);
+            _participants.AddChild(Ui.HBox(10, Ui.Avatar(x.Name, 32, RoleColor(r)),
+                Ui.VBox(0, Ui.Label(x.Name, Fonts.Sm, Palette.TextPrimary, font: Fonts.SansMedium),
+                    Ui.Label(x.ReportsTo == s.Player.Role ? $"{r} · reports to you" : r == ExecRole.Vendor ? "External vendor" : r.ToString(), Fonts.Xs, Palette.TextMuted))));
+        }
+        var divider = Ui.Label($"{s.CurrentDate:dddd, MMMM d} · meeting started", Fonts.Xs, Palette.TextMuted);
+        divider.HorizontalAlignment = HorizontalAlignment.Center;
+        _thread.AddChild(divider);
+        var hint = Ui.Empty("The room is listening.", "Ask a question, give an instruction with a deadline, or pick one of the ideas below.", "chats-circle");
+        hint.SetMeta("empty", true);
+        _thread.AddChild(hint);
         _confirmCard.Visible = false;
     }
+
+    private static Color RoleColor(ExecRole r) => r switch
+    {
+        ExecRole.CEO => new Color("3b2f12"), ExecRole.CFO => new Color("12313a"), ExecRole.CMO or ExecRole.CNO => new Color("153526"),
+        ExecRole.CISO => new Color("3a1a1f"), ExecRole.Vendor => new Color("2a2a2a"), _ => new Color("1c2b4a"),
+    };
+
+    // ------------------------------------------------------------------ thread items
+
+    private void AddToThread(Control c)
+    {
+        // The "room is listening" hint goes away once the conversation starts.
+        if (_thread.GetChildCount() >= 2 && _thread.GetChild(1) is HBoxContainer first && first.GetMeta("empty", false).AsBool()) { _thread.RemoveChild(first); first.QueueFree(); }
+        _thread.AddChild(c);
+        Motion.FadeIn(c, 0.2, 0);
+        ScrollToEnd();
+    }
+
+    private async void ScrollToEnd()
+    {
+        if (!IsInsideTree()) return;
+        await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+        if (IsInstanceValid(_scroll)) _scroll.ScrollVertical = (int)_scroll.GetVScrollBar().MaxValue;
+    }
+
+    private void AppendPlayer(string text)
+    {
+        _transcript.AppendLine($"You: {text}");
+        var bubble = Ui.Card(Ui.Label(text, Fonts.Base, Palette.TextPrimary, wrap: true), Palette.AccentSoft, new Color(Palette.Accent, 0.45f), 14);
+        bubble.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        bubble.SizeFlagsStretchRatio = 7;
+        var spacer = Ui.Spacer();
+        spacer.SizeFlagsStretchRatio = 3;
+        AddToThread(Ui.VBox(4, Ui.HBox(0, Ui.Spacer(), Ui.Caption("You")), Ui.HBox(0, spacer, bubble)));
+    }
+
+    private void AppendReply(MeetingReply reply)
+    {
+        _transcript.AppendLine($"{reply.Name}: {reply.Text}");
+        var header = Ui.HBox(8, Ui.Label(reply.Name, Fonts.Sm, Palette.TextPrimary, font: Fonts.SansSemi), Ui.Label(Roles.Label(reply.Speaker), Fonts.Xs, Palette.TextMuted));
+        var (word, color) = reply.Position switch
+        {
+            Core.Executives.Position.Support => ("● supports", Palette.Success),
+            Core.Executives.Position.Oppose => ("● opposes", Palette.Danger),
+            Core.Executives.Position.Concerned => ("● concerned", Palette.Warning),
+            Core.Executives.Position.Conditional => ("● it depends", Palette.TextSecondary),
+            Core.Executives.Position.Neutral => ("● neutral", Palette.TextSecondary),
+            _ => ("", Palette.TextSecondary),
+        };
+        if (word.Length > 0) header.AddChild(Ui.Pill(word, color));
+        if (reply.AiGenerated) { var ai = Ui.Pill("AI", Palette.Info); ai.TooltipText = "Worded by the local language model; the position itself comes from the simulation."; header.AddChild(ai); }
+        var bubble = Ui.Card(Ui.Label(reply.Text, Fonts.Base, Palette.TextPrimary, wrap: true), Palette.BgElevated, Palette.Border, 14);
+        bubble.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        var body = Ui.VBox(6, header, bubble);
+        body.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        body.SizeFlagsStretchRatio = 8;
+        var spacer = Ui.Spacer();
+        spacer.SizeFlagsStretchRatio = 2;
+        AddToThread(Ui.HBox(12, Ui.Avatar(reply.Name, 36, RoleColor(reply.Speaker)), body, spacer));
+    }
+
+    private void AppendOutcome(MeetingResponse r)
+    {
+        if (r.Intent?.Action is { } a && r.Outcome == null && r.ConfirmationPrompt == null)
+            AppendNote($"Understood as \"{a.Name.Replace('_', ' ')}\" — not carried out.");
+        if (r.Outcome?.Executed == true)
+        {
+            _transcript.AppendLine($"RECORDED: {r.Outcome.Summary}");
+            var v = Ui.VBox(4, Ui.HBox(8, Ui.Icon("check-circle", 18, Palette.Success), Ui.Label("RECORDED", Fonts.Xs, Palette.Success, font: Fonts.Caption)),
+                Ui.Label(r.Outcome.Summary, Fonts.Base, Palette.TextPrimary, wrap: true, font: Fonts.SansMedium));
+            foreach (var e in r.Outcome.Effects) v.AddChild(Ui.Label("• " + e, Fonts.Sm, Palette.TextSecondary, wrap: true));
+            if (r.Outcome.DecisionId is { } id) v.AddChild(Ui.Label($"Decision {id} · logged for your performance review", Fonts.Xs, Palette.TextMuted, font: Fonts.Mono));
+            AddToThread(Ui.AccentCard(v, Palette.Success));
+        }
+        foreach (var n in r.SystemNotes.Where(n => r.Outcome == null || (n != r.Outcome.Summary && !r.Outcome.Effects.Contains(n))))
+            AppendNote(n);
+    }
+
+    private void AppendNote(string text)
+    {
+        _transcript.AppendLine($"note: {text}");
+        AddToThread(Ui.HBox(8, Ui.Gap(48), Ui.Icon("info", 16, Palette.TextMuted), Ui.Label(text, Fonts.Sm, Palette.TextMuted, wrap: true)));
+    }
+
+    private void ShowTyping(string name, ExecRole role, string fullName)
+    {
+        HideTyping();
+        _typingName = name;
+        _dotClock = 0;
+        _typingLabel = Ui.Label($"{name} is typing", Fonts.Sm, Palette.TextMuted);
+        var bubble = Ui.Card(_typingLabel, Palette.BgElevated, Palette.Border, 12);
+        _typingBubble = Ui.HBox(12, Ui.Avatar(fullName, 36, RoleColor(role)), bubble);
+        _thread.AddChild(_typingBubble);
+        ScrollToEnd();
+    }
+
+    private void HideTyping()
+    {
+        if (_typingBubble != null && IsInstanceValid(_typingBubble)) { _thread.RemoveChild(_typingBubble); _typingBubble.QueueFree(); }
+        _typingBubble = null;
+        _typingLabel = null;
+    }
+
+    // ------------------------------------------------------------------ flow
 
     private async Task Send()
     {
         var text = _input.Text.Trim();
         if (text.Length == 0 || _meeting == null) return;
-        if (_game.Session.State.Outcome != GameOutcome.InProgress) { _game.Toast("Your tenure has ended.", Palette.Warn); return; }
+        if (_game.Session.State.Outcome != GameOutcome.InProgress) { _game.Toast("Your tenure has ended.", Palette.Warning); return; }
         _input.Text = "";
-        _log.AppendText($"[color={Palette.Hex(Palette.Accent)}][b]You:[/b][/color] {Ui.Esc(text)}\n");
+        AppendPlayer(text);
         await Run(ct => _meeting.SayAsync(text, ExecRole.None, ct));
     }
 
     private async Task Confirm(bool yes)
     {
         if (_meeting == null) return;
-        _log.AppendText($"[color={Palette.Hex(Palette.Accent)}][b]You:[/b][/color] {(yes ? "Confirmed." : "Let's not proceed.")}\n");
+        AppendPlayer(yes ? "Confirmed — go ahead." : "Let's not proceed.");
         await Run(ct => _meeting.ConfirmAsync(yes, ct));
     }
 
@@ -230,12 +322,12 @@ public partial class MeetingView : VBoxContainer, IGameView
         }
         catch (Exception e)
         {
-            // Defensive: a failure here must never take the game down.
-            _log.AppendText($"[color={Palette.Hex(Palette.Bad)}]Meeting error: {Ui.Esc(e.Message)}[/color]\n");
+            AppendNote($"Something went wrong in the meeting: {e.Message}. Nothing was changed.");
             GD.PushError(e.ToString());
         }
         finally
         {
+            HideTyping();
             SetBusy(false);
             _confirmCard.Visible = _meeting?.HasPendingConfirmation == true;
             _confirmText.Text = _meeting?.PendingConfirmationPrompt ?? "";
@@ -248,8 +340,37 @@ public partial class MeetingView : VBoxContainer, IGameView
     {
         _send.Disabled = busy;
         _input.Editable = !busy;
+        _skip.Visible = busy && _game.Session.Settings.ReplyPacing != 0;
         _cancelGen.Visible = busy && _game.Session.Llm?.Status == Core.AI.Llm.LlmStatus.Ready;
-        _thinking.Text = busy ? (_game.Session.Llm?.Status == Core.AI.Llm.LlmStatus.Ready ? "Executives are considering your words…" : "") : "";
+        _thinking.Text = busy && _game.Session.Llm?.Status == Core.AI.Llm.LlmStatus.Ready ? "Executives are considering your words…" : "";
+    }
+
+    private async Task WaitAsync(double seconds)
+    {
+        double end = Time.GetTicksMsec() / 1000.0 + seconds;
+        while (!_skipRequested && Time.GetTicksMsec() / 1000.0 < end && IsInsideTree())
+            await ToSignal(GetTree().CreateTimer(0.05), SceneTreeTimer.SignalName.Timeout);
+    }
+
+    /// <summary>Reveal replies one by one at each executive's pace, then the recorded outcome.</summary>
+    private async Task RenderAsync(MeetingResponse r)
+    {
+        var pacing = (ReplyPacing)_game.Session.Settings.ReplyPacing;
+        _skipRequested = false;
+        var s = _game.Session.State;
+        foreach (var reply in r.Replies)
+        {
+            if (pacing != ReplyPacing.Off && !_skipRequested && IsInsideTree() && s.TryExec(reply.Speaker) is { } x)
+            {
+                var t = TypingPace.For(x, reply.Text, pacing);
+                await WaitAsync(t.ThinkSeconds);
+                ShowTyping(reply.Name.StartsWith("Dr. ") ? "Dr. " + reply.Name.Split(' ')[^1] : reply.Name.Split(' ')[0], reply.Speaker, reply.Name);
+                await WaitAsync(t.TypeSeconds);
+                HideTyping();
+            }
+            AppendReply(reply);
+        }
+        AppendOutcome(r);
     }
 
     private void Render(MeetingResponse r)
@@ -258,46 +379,12 @@ public partial class MeetingView : VBoxContainer, IGameView
         AppendOutcome(r);
     }
 
-    private void AppendReply(MeetingReply reply)
-    {
-        {
-            string pos = reply.Position switch
-            {
-                Core.Executives.Position.Support => $" [color={Palette.Hex(Palette.Good)}]supports[/color]",
-                Core.Executives.Position.Oppose => $" [color={Palette.Hex(Palette.Bad)}]opposes[/color]",
-                Core.Executives.Position.Concerned => $" [color={Palette.Hex(Palette.Warn)}]concerned[/color]",
-                Core.Executives.Position.Conditional => $" [color={Palette.Hex(Palette.Muted)}]conditional[/color]",
-                _ => "",
-            };
-            string tag = reply.AiGenerated ? $" [color={Palette.Hex(Palette.Muted)}][font_size=11]AI[/font_size][/color]" : "";
-            _log.AppendText($"[b]{Ui.Esc(reply.Name)}[/b] [color={Palette.Hex(Palette.Muted)}]({Roles.Label(reply.Speaker)})[/color]{pos}{tag}\n{Ui.Esc(reply.Text)}\n\n");
-        }
-    }
+    // ------------------------------------------------------------------ test hooks
 
-    private void AppendOutcome(MeetingResponse r)
-    {
-        var muted = Palette.Hex(Palette.Muted);
-        if (r.Intent?.Action is { } a && r.Outcome == null && r.ConfirmationPrompt == null)
-            _log.AppendText($"[color={muted}][i]Interpreted as {a.Name.Replace('_', ' ')} — not carried out.[/i][/color]\n");
-        if (r.Outcome?.Executed == true)
-        {
-            _log.AppendText($"[color={Palette.Hex(Palette.Good)}]▶ RECORDED: {Ui.Esc(r.Outcome.Summary)}[/color]\n");
-            foreach (var e in r.Outcome.Effects) _log.AppendText($"[color={muted}]   • {Ui.Esc(e)}[/color]\n");
-            var dec = _game.Session.State.Decisions.LastOrDefault(d => d.Id == r.Outcome.DecisionId);
-            if (dec != null) _log.AppendText($"[color={muted}]   • Decision {dec.Id} logged for review.[/color]\n");
-            _log.AppendText("\n");
-        }
-        foreach (var n in r.SystemNotes.Where(n => r.Outcome == null || (n != r.Outcome.Summary && !r.Outcome.Effects.Contains(n))))
-            _log.AppendText($"[color={muted}][i]{Ui.Esc(n)}[/i][/color]\n");
-    }
-
-    /// <summary>Used by the smoke test: goes through the real input → paced rendering path.</summary>
     public Task SendForTest(string text) { _input.Text = text; return Send(); }
-    public bool TypingVisible => _typingRow.Visible;
-    public string LogText => _log.GetParsedText();
-
-    /// <summary>Used by the smoke test.</summary>
-    public Task<MeetingResponse> SayForTest(string text) => _meeting!.SayAsync(text);
+    public bool TypingVisible => _typingBubble != null && IsInstanceValid(_typingBubble);
+    public string LogText => _transcript.ToString();
+    public Task<MeetingResponse> SayForTest(string text) { AppendPlayer(text); return _meeting!.SayAsync(text); }
     public Task<MeetingResponse> ConfirmForTest(bool yes) => _meeting!.ConfirmAsync(yes);
     public void RenderForTest(MeetingResponse r) => Render(r);
 }

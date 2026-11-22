@@ -88,3 +88,16 @@ public class TypingPaceTests
         foreach (var x in s.Executives) Assert.InRange(TypingPace.For(x, new string('x', 2000), ReplyPacing.Natural).Total, 0.8, 7.0);
     }
 }
+
+public class HistoryTests
+{
+    [Fact]
+    public void MonthEndSnapshotsAreRecordedForTrends()
+    {
+        var e = NewGame();
+        Assert.Single(e.State.History); // baseline
+        e.AdvanceDays(90);
+        Assert.Equal(1 + e.State.Finance.Statements.Count, e.State.History.Count);
+        Assert.All(e.State.History.Skip(1), h => Assert.NotNull(h.OperatingMargin));
+    }
+}

@@ -19,6 +19,8 @@ public sealed class ReplyContext
     public List<string> EngineResult { get; init; } = new();
     public string? Question { get; init; }
     public int TurnNumber { get; init; }
+    /// <summary>The executive already gave their reasoning (e.g. before confirmation); just acknowledge.</summary>
+    public bool Brief { get; init; }
 }
 
 /// <summary>
@@ -71,7 +73,7 @@ public static class DialogueComposer
                     Position.Concerned => Pick("Understood, although I have reservations.", "Okay. I'm not fully comfortable with it."),
                     _ => Pick("Okay.", "Noted.", "All right."),
                 };
-                return $"{head} {reasons}{conditions}".Trim();
+                return c.Brief ? head : $"{head} {reasons}{conditions}".Trim();
             case ReplyKind.Interjection:
                 return st?.Position switch
                 {

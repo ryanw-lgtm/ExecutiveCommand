@@ -12,34 +12,59 @@ public partial class MainMenu : Control
 
     public MainMenu(Main main)
     {
-        var center = new CenterContainer();
-        center.SetAnchorsPreset(LayoutPreset.FullRect);
-        AddChild(center);
-        var col = Ui.VBox(14);
-        col.CustomMinimumSize = new Vector2(440, 0);
-        center.AddChild(col);
+        // Asymmetric layout: brand and actions on the left, the situation you're walking into on the right.
+        var margin = new MarginContainer();
+        margin.SetAnchorsPreset(LayoutPreset.FullRect);
+        foreach (var (side, v) in new[] { ("left", 96), ("right", 96), ("top", 96), ("bottom", 64) }) margin.AddThemeConstantOverride($"margin_{side}", v);
+        AddChild(margin);
+        var row = Ui.HBox(80);
+        margin.AddChild(row);
 
-        col.AddChild(Ui.Label("EXECUTIVE", 48, Palette.Text));
-        col.AddChild(Ui.Label("COMMAND", 48, Palette.Accent));
-        col.AddChild(Ui.Label("Leadership is measured in consequences.", 16, Palette.Muted));
-        col.AddChild(new Control { CustomMinimumSize = new Vector2(0, 24) });
+        var col = Ui.VBox(12);
+        col.CustomMinimumSize = new Vector2(420, 0);
+        row.AddChild(col);
+        col.AddChild(Ui.Label("EXECUTIVE", 56, Palette.TextPrimary, font: Fonts.SansSemi));
+        col.AddChild(Ui.Label("COMMAND", 56, Palette.Accent, font: Fonts.SansSemi));
+        col.AddChild(new ColorRect { Color = Palette.Accent, CustomMinimumSize = new Vector2(64, 3) });
+        col.AddChild(Ui.Label("Leadership is measured in consequences.", Fonts.Lg, Palette.TextSecondary));
+        col.AddChild(Ui.Gap(32));
 
         bool hasAutosave = main.Session.Saves.Exists("autosave");
         var cont = Ui.Button("Continue", () =>
         {
             var warn = main.Session.Load("autosave");
             main.ShowGame();
-            if (warn != null) main.Toast(warn, Palette.Warn);
-        }, primary: true);
+            if (warn != null) main.Toast(warn, Palette.Warning);
+        }, primary: hasAutosave, icon: "play");
         cont.Disabled = !hasAutosave;
         col.AddChild(cont);
-        col.AddChild(Ui.Button("New Career — Healthcare CTO", main.ShowNewGame, primary: !hasAutosave));
-        col.AddChild(Ui.Button("Load Game", () => main.ShowSaveLoad(false)));
-        col.AddChild(Ui.Button("Settings", () => main.ShowSettings(false)));
-        col.AddChild(Ui.Button("Quit", () => main.Quit()));
-        col.AddChild(new Control { CustomMinimumSize = new Vector2(0, 24) });
-        col.AddChild(Ui.Label($"v{GameInfo.Version} · prototype · all organizations and people are fictional", 12, Palette.Muted));
-        foreach (var b in col.GetChildren().OfType<Button>()) b.CustomMinimumSize = new Vector2(0, 44);
+        col.AddChild(Ui.Button("New career — Healthcare CTO", main.ShowNewGame, primary: !hasAutosave, icon: "lightning"));
+        col.AddChild(Ui.Button("Load game", () => main.ShowSaveLoad(false), icon: "floppy-disk"));
+        col.AddChild(Ui.Button("Settings", () => main.ShowSettings(false), icon: "gear-six"));
+        col.AddChild(Ui.Button("Quit", () => main.Quit(), icon: "x"));
+        foreach (var b in col.GetChildren().OfType<Button>()) { b.CustomMinimumSize = new Vector2(0, 48); b.Alignment = HorizontalAlignment.Left; }
+        col.AddChild(Ui.Spacer(false));
+        col.AddChild(Ui.Label($"v{GameInfo.Version} · prototype · runs fully offline", Fonts.Xs, Palette.TextMuted));
+
+        var brief = Ui.VBox(14,
+            Ui.Caption("Your first briefing"),
+            Ui.Label("Meridian Crest Health Partners", Fonts.Xl, Palette.TextPrimary, font: Fonts.SansSemi),
+            Ui.Label("Four hospitals. One aging EHR. A disaster-recovery plan that has never met its target — and a board that has started asking.", Fonts.Lg, Palette.TextSecondary, wrap: true),
+            Ui.Gap(8));
+        foreach (var (icon, text) in new[]
+                 {
+                     ("chats-circle", "Talk to your executives in your own words. They will push back."),
+                     ("scales", "Every decision is judged on evidence, not on what you claim."),
+                     ("chart-line-up", "Money is real: budgets reconcile, savings must be realized."),
+                     ("shield-warning", "Some risks are hidden until someone investigates."),
+                 })
+            brief.AddChild(Ui.HBox(14, Ui.Icon(icon, 22, Palette.Accent), Ui.Label(text, Fonts.Base, Palette.TextPrimary, wrap: true)));
+        brief.AddChild(Ui.Gap(8));
+        brief.AddChild(Ui.Label("All organizations, people and figures are fictional.", Fonts.Sm, Palette.TextMuted));
+        var briefCard = Ui.Card(brief, Palette.BgSurface, Palette.Border, 32);
+        briefCard.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        briefCard.SizeFlagsVertical = SizeFlags.ShrinkCenter;
+        row.AddChild(briefCard);
     }
 }
 
@@ -141,12 +166,13 @@ public partial class SettingsScreen : Control
         foreach (var f in new[] { 0.9f, 1.0f, 1.1f, 1.25f, 1.5f }) scale.AddItem($"{f:P0} interface scale");
         scale.Selected = Array.IndexOf(new[] { 0.9f, 1.0f, 1.1f, 1.25f, 1.5f }, st.UiScale) is var i && i >= 0 ? i : 1;
         var autosave = new CheckBox { Text = "Autosave after each time advance", ButtonPressed = st.Autosave };
+        var reduce = new CheckBox { Text = "Reduce motion (no fades or button animation)", ButtonPressed = st.ReduceMotion };
         var pacing = new OptionButton();
         pacing.AddItem("Executive replies: instant", 0);
         pacing.AddItem("Executive replies: quick typing", 1);
         pacing.AddItem("Executive replies: natural typing (each executive at their own pace)", 2);
         pacing.Selected = Math.Clamp(st.ReplyPacing, 0, 2);
-        disp.AddChild(full); disp.AddChild(scale); disp.AddChild(pacing); disp.AddChild(autosave);
+        disp.AddChild(full); disp.AddChild(scale); disp.AddChild(pacing); disp.AddChild(reduce); disp.AddChild(autosave);
         col.AddChild(Ui.Card(disp));
 
         col.AddChild(Ui.Card(Ui.VBox(6, Ui.Caption("Privacy"),
@@ -160,7 +186,7 @@ public partial class SettingsScreen : Control
                 st.AiEnabled = enabled.ButtonPressed;
                 st.ModelPath = model.Selected <= 0 ? "" : models[model.Selected - 1];
                 st.Threads = (int)threads.Value; st.GpuLayers = (int)gpu.Value; st.ContextSize = (int)ctx.Value;
-                st.Fullscreen = full.ButtonPressed; st.UiScale = new[] { 0.9f, 1.0f, 1.1f, 1.25f, 1.5f }[scale.Selected]; st.Autosave = autosave.ButtonPressed; st.ReplyPacing = pacing.Selected;
+                st.Fullscreen = full.ButtonPressed; st.UiScale = new[] { 0.9f, 1.0f, 1.1f, 1.25f, 1.5f }[scale.Selected]; st.Autosave = autosave.ButtonPressed; st.ReplyPacing = pacing.Selected; st.ReduceMotion = reduce.ButtonPressed; Motion.Reduced = st.ReduceMotion;
                 main.Session.SaveSettings();
                 main.ApplyDisplaySettings();
                 _status.Text = "Starting local AI…";

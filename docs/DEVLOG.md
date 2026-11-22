@@ -1,5 +1,15 @@
 # Development log
 
+## 2026-11-22 — Iteration 4: visual redesign (Rune / UI-UX Pro Max principles)
+- **Design tokens** (`game/scripts/UI/Palette.cs`): semantic surfaces (base/sunken/surface/elevated), no pure black or white, executive-gold accent (no default blue/purple), green/red reserved for data and always paired with ▲▼● symbols.
+- **Typography**: IBM Plex Sans for UI, IBM Plex Mono for every number; 12/14/16/18/24/32 scale, 16px body, semibold headings.
+- **Icons**: Phosphor (MIT), rasterized at exact size for crispness; icon navigation with a gold active marker.
+- **Dashboard**: non-uniform hierarchy — attention list + financial pulse, KPI strip with change vs last month and sparklines (from new month-end `History` snapshots), ideas + timeline.
+- **Meeting room**: chat thread with avatars, position pills, AI label, grey typing bubble, distinct RECORDED card; confirmed decisions get a short acknowledgement instead of repeated reasoning.
+- **Interaction**: Ctrl+K command palette; 2px focus rings; press feedback (scale 0.97, 120ms); fades ≤ 200ms ease-out, exits faster; no animation for keyboard-initiated navigation; "Reduce motion" setting.
+- **Empty states** everywhere say what's missing and how to fill it. Main menu uses an asymmetric layout with a briefing panel.
+- Verified: 64/64 tests; smoke test ALL PASSED incl. command palette; screenshots reviewed.
+
 ## 2026-11-21 — Iteration 3: executive typing times
 - Replies in the meeting room now arrive one at a time with a "<name> is typing…" indicator. Each executive has their own pace (`Core/AI/TypingPace.cs`): decisive people answer sooner, cautious ones (e.g. the CFO, CMO) pause before replying, overloaded people are slower, and longer answers take longer.
 - **Skip** button reveals everything at once; Settings offers instant / quick / natural pacing (default natural). Purely presentational — no effect on game state.

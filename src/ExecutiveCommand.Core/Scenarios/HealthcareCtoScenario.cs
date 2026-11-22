@@ -187,6 +187,7 @@ public static class HealthcareCtoScenario
                    "Daniel (CIO), Priya (CISO) and Marcus (Enterprise Architecture) report to you. Three DR options and an identity expansion request are waiting for a decision, " +
                    "and the Halcyon EHR contract renews April 30. I expect recommendations grounded in evidence, not enthusiasm. — Evelyn",
         });
+        s.History.Add(FinancialEngine.Snapshot(s, null)); // baseline for trends
         s.RngState = rng.State;
         return s;
     }
