@@ -15,7 +15,7 @@ public sealed class PlayerSettings
     public string ModelPath { get; set; } = "";
     public int Threads { get; set; } = Math.Max(1, System.Environment.ProcessorCount / 2);
     public int GpuLayers { get; set; }
-    public int ContextSize { get; set; } = 4096;
+    public int ContextSize { get; set; } = 6144;
     public bool Fullscreen { get; set; }
     public float UiScale { get; set; } = 1.0f;
     public bool Autosave { get; set; } = true;
@@ -56,6 +56,7 @@ public sealed class GameSession : IDisposable
         CurrentSlot = "career";
         if (Settings.Autosave) Saves.Save("autosave", State);
         StateChanged?.Invoke();
+        WarmUp();
     }
 
     public string? Load(string slot)
@@ -64,6 +65,7 @@ public sealed class GameSession : IDisposable
         Engine = new SimulationEngine(r.State);
         CurrentSlot = slot == "autosave" ? "career" : slot;
         StateChanged?.Invoke();
+        WarmUp();
         return r.Warning;
     }
 
@@ -98,30 +100,92 @@ public sealed class GameSession : IDisposable
         return candidates.Select(Path.GetFullPath).FirstOrDefault(File.Exists) ?? candidates[0];
     }
 
+    /// <summary>Where the downloaded model lives: %APPDATA%\ExecutiveCommand\models on Windows.</summary>
+    public static string ModelsDir => ProjectSettings.GlobalizePath("user://models");
+
     public static IEnumerable<string> DiscoverModels()
     {
         var dirs = new[]
         {
+            ModelsDir,
             Path.Combine(Path.GetDirectoryName(OS.GetExecutablePath()) ?? "", "models"),
             Path.Combine(ProjectSettings.GlobalizePath("res://"), "..", "models"),
-            ProjectSettings.GlobalizePath("user://models"),
         };
-        return dirs.Where(Directory.Exists).SelectMany(d => Directory.GetFiles(d, "*.gguf")).Select(Path.GetFullPath).Distinct();
+        return dirs.Where(Directory.Exists).SelectMany(d => Directory.GetFiles(d, "*.gguf")).Select(Path.GetFullPath)
+                   .Where(m => !m.Contains("test-tiny-random")).Distinct();
     }
+
+    public enum AiPhase { NeedsModel, Downloading, Starting, Ready, Failed, Disabled }
+    public AiPhase Phase { get; private set; } = AiPhase.NeedsModel;
+    public string AiMessage { get; private set; } = "";
+    public DownloadProgress? Download { get; private set; }
+    public event Action? AiChanged;
+    private CancellationTokenSource? _downloadCts;
+
+    private void SetPhase(AiPhase p, string message)
+    {
+        Phase = p; AiMessage = message;
+        AiChanged?.Invoke();
+    }
+
+    public string? FindModel()
+    {
+        if (!string.IsNullOrEmpty(Settings.ModelPath) && File.Exists(Settings.ModelPath)) return Settings.ModelPath;
+        var preferred = Path.Combine(ModelsDir, ModelSpec.Default.FileName);
+        if (ModelDownloader.IsInstalled(ModelsDir, ModelSpec.Default)) return preferred;
+        return DiscoverModels().FirstOrDefault(m => Path.GetFileName(m) == ModelSpec.Default.FileName && new FileInfo(m).Length == ModelSpec.Default.SizeBytes)
+               ?? DiscoverModels().FirstOrDefault();
+    }
+
+    /// <summary>Downloads the pinned model (once), verifies it, then starts the AI.</summary>
+    public async Task DownloadModelAsync()
+    {
+        if (Phase == AiPhase.Downloading) return;
+        _downloadCts = new CancellationTokenSource();
+        SetPhase(AiPhase.Downloading, "Downloading the AI model…");
+        try
+        {
+            var progress = new Progress<DownloadProgress>(p => { Download = p; AiChanged?.Invoke(); });
+            await new ModelDownloader().DownloadAsync(ModelSpec.Default, ModelsDir, progress, _downloadCts.Token);
+            Download = null;
+            await StartAiAsync();
+        }
+        catch (OperationCanceledException) { Download = null; SetPhase(AiPhase.NeedsModel, "Download paused. It will resume where it left off."); }
+        catch (Exception e) { Download = null; SetPhase(AiPhase.NeedsModel, $"Download failed: {e.Message}"); }
+    }
+
+    public void CancelDownload() => _downloadCts?.Cancel();
 
     public async Task StartAiAsync()
     {
         StopAi();
-        if (!Settings.AiEnabled) { AiStatusChanged?.Invoke(LlmStatus.Disabled); return; }
-        string model = Settings.ModelPath;
-        if (string.IsNullOrEmpty(model) || !File.Exists(model)) model = DiscoverModels().FirstOrDefault(m => !m.Contains("test-tiny-random")) ?? "";
+        if (!Settings.AiEnabled) { SetPhase(AiPhase.Disabled, "AI is turned off in Settings."); AiStatusChanged?.Invoke(LlmStatus.Disabled); return; }
+        var model = FindModel();
+        if (model == null)
+        {
+            SetPhase(AiPhase.NeedsModel, $"The AI model ({ModelSpec.Default.SizeBytes / 1_000_000_000.0:0.0} GB) needs a one-time download.");
+            AiStatusChanged?.Invoke(LlmStatus.NotConfigured);
+            return;
+        }
+        SetPhase(AiPhase.Starting, "Starting the AI…");
         Llm = new LlamaServerModel(new LlmSettings
         {
             ServerPath = BundledServerPath(), ModelPath = model, Threads = Settings.Threads, GpuLayers = Settings.GpuLayers, ContextSize = Settings.ContextSize,
         });
         Llm.StatusChanged += s => Callable.From(() => AiStatusChanged?.Invoke(s)).CallDeferred();
-        await Llm.StartAsync();
+        bool ok = await Llm.StartAsync();
         AiStatusChanged?.Invoke(Llm.Status);
+        if (!ok) { SetPhase(AiPhase.Failed, $"The AI could not start: {Llm.LastError}"); return; }
+        SetPhase(AiPhase.Ready, "AI ready");
+        WarmUp();
+    }
+
+    /// <summary>Pre-load every executive's persona so even their first reply is quick.</summary>
+    public void WarmUp()
+    {
+        if (Llm?.Status != LlmStatus.Ready || !HasGame) return;
+        var prompts = State.Executives.Select(x => Core.AI.MeetingService.SystemPromptFor(State, x)).ToList();
+        _ = Llm.WarmupAsync(prompts);
     }
 
     public void StopAi()

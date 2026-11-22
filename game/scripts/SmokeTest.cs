@@ -110,6 +110,34 @@ public static class SmokeTest
             main.ShowSaveLoad(true); await Frames(); await Shot("11_save_load");
             main.ShowSettings(true); await Frames(); await Shot("12_settings");
             main.Session.Saves.Delete("smoke");
+
+            if (args.Contains("--with-ai"))
+            {
+                // Real local AI, end to end through the actual UI.
+                main.Session.Settings.AiEnabled = true;
+                main.Session.Settings.ReplyPacing = 2;
+                main.Session.NewGame("AI Tester", Difficulty.Professional, 7);
+                var g2 = main.ShowGame(); await Frames();
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                await main.Session.StartAiAsync();
+                GD.Print($"[smoke] AI phase {main.Session.Phase} after {sw.Elapsed.TotalSeconds:0}s: {main.Session.AiMessage}");
+                Check(main.Session.Phase == GameSession.AiPhase.Ready, "local AI started");
+                g2.OpenMeeting(new[] { Core.Model.ExecRole.CFO, Core.Model.ExecRole.CIO }, null); await Frames();
+                sw.Restart();
+                var talk = g2.Meeting.SendForTest("Raymond, where do you stand on building a second on-premises data center?");
+                bool typing = false;
+                while (!talk.IsCompleted && sw.Elapsed.TotalSeconds < 600)
+                {
+                    await Frames(5);
+                    if (g2.Meeting.TypingVisible && !typing) { typing = true; await Shot("13_ai_typing"); }
+                }
+                await talk;
+                GD.Print($"[smoke] AI meeting turn took {sw.Elapsed.TotalSeconds:0}s");
+                GD.Print("[smoke] transcript:\n" + g2.Meeting.LogText);
+                Check(typing, "live typing indicator while the AI writes");
+                Check(main.Session.State.MeetingLog.Any(t => t.AiGenerated), "reply written by the AI");
+                await Shot("14_ai_meeting");
+            }
             GD.Print("[smoke] ALL PASSED");
             main.Quit(0);
         }

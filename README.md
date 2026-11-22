@@ -11,7 +11,7 @@ anything, or award success.
 
 Status: **Phase 1–2 prototype / first vertical slice** (healthcare CTO scenario). See `docs/DEVLOG.md`.
 
-**Windows build:** [download ExecutiveCommand-windows.zip](https://github.com/ryanw-lgtm/ExecutiveCommand/raw/windows-build/ExecutiveCommand-windows.zip) (72 MB). Extract it and run `windows\ExecutiveCommand.exe`. Instructions are on the [`windows-build` branch](https://github.com/ryanw-lgtm/ExecutiveCommand/tree/windows-build). It has not yet been tested on real Windows.
+**Windows build:** [download ExecutiveCommand-windows.zip](https://github.com/ryanw-lgtm/ExecutiveCommand/raw/windows-build/ExecutiveCommand-windows.zip) (72 MB). Extract it and run `windows\ExecutiveCommand.exe`. Instructions are on the [`windows-build` branch](https://github.com/ryanw-lgtm/ExecutiveCommand/tree/windows-build). On first launch it offers a one-time 2.5 GB download of the AI model (Qwen3-4B, Apache-2.0); after that it runs fully offline. It has not yet been tested on real Windows.
 
 ## Repository layout
 

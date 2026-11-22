@@ -168,7 +168,11 @@ async Task<int> Demo2()
 async Task Say(MeetingService m, string text)
 {
     Console.WriteLine($"\n  YOU: {text}");
-    Print(await m.SayAsync(text));
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    var resp = await m.SayAsync(text);
+    Print(resp);
+    if (llm != null) Console.WriteLine($"    ⏱ {sw.Elapsed.TotalSeconds:0.0}s for {resp.Replies.Count} repl{(resp.Replies.Count == 1 ? "y" : "ies")}" +
+        string.Concat(resp.Replies.Where(x => x.FallbackReason != null).Select(x => $" · {x.Name.Split(' ')[0]}: {x.FallbackReason}")));
 }
 
 void Print(MeetingResponse r)

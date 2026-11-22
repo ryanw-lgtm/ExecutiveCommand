@@ -17,9 +17,10 @@ public sealed class LlmSettings
     public int Threads { get; set; } = Math.Max(1, Environment.ProcessorCount / 2);
     public int GpuLayers { get; set; }
     public int StartupTimeoutSeconds { get; set; } = 120;
-    public int InterpretTimeoutSeconds { get; set; } = 20;
-    public int DialogueTimeoutSeconds { get; set; } = 30;
-    public int MaxDialogueTokens { get; set; } = 180;
+    // Generous limits: on a modest CPU a reply takes ~5–20 s. The UI shows real typing meanwhile.
+    public int InterpretTimeoutSeconds { get; set; } = 60;
+    public int DialogueTimeoutSeconds { get; set; } = 120;
+    public int MaxDialogueTokens { get; set; } = 110;
     public double DialogueTemperature { get; set; } = 0.7;
     public bool Enabled { get; set; } = true;
 }
@@ -88,12 +89,16 @@ public sealed class LlamaServerModel : ILanguageModel, IDisposable
             SetStatus(LlmStatus.NotConfigured);
             return false;
         }
+        // The server runs in its own folder, so every path handed to it must be absolute.
+        _settings.ServerPath = Path.GetFullPath(_settings.ServerPath);
+        _settings.ModelPath = Path.GetFullPath(_settings.ModelPath);
         _port = FreePort();
         var psi = new ProcessStartInfo(_settings.ServerPath)
         {
             UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true,
             WorkingDirectory = Path.GetDirectoryName(_settings.ServerPath)!,
         };
+        if (!OperatingSystem.IsWindows()) psi.Environment["LD_LIBRARY_PATH"] = Path.GetDirectoryName(_settings.ServerPath)!; // dev builds ship .so files beside the server
         foreach (var a in new[]
                  {
                      "-m", _settings.ModelPath, "--host", "127.0.0.1", "--port", _port.ToString(), "-c", _settings.ContextSize.ToString(),
@@ -146,6 +151,23 @@ public sealed class LlamaServerModel : ILanguageModel, IDisposable
         }
     }
 
+    private CancellationTokenSource? _warmupCts;
+
+    /// <summary>
+    /// Pre-processes each prompt (e.g. every executive's persona) so the server's prompt cache already
+    /// holds it when the player first speaks. Runs in the background and yields to any real request.
+    /// </summary>
+    public async Task WarmupAsync(IEnumerable<string> systemPrompts)
+    {
+        _warmupCts?.Cancel();
+        var cts = _warmupCts = new CancellationTokenSource();
+        foreach (var p in systemPrompts)
+        {
+            if (cts.IsCancellationRequested) return;
+            await ChatAsync(new[] { new ChatMessage("system", p), new ChatMessage("user", "(warm-up)") }, null, 0, 1, 300, cts.Token, isWarmup: true);
+        }
+    }
+
     public Task<string?> CompleteJsonAsync(IReadOnlyList<ChatMessage> messages, JsonObject schema, CancellationToken ct) =>
         ChatAsync(messages, new JsonObject { ["type"] = "json_schema", ["json_schema"] = new JsonObject { ["name"] = "interpretation", ["schema"] = schema.DeepClone() } },
             temperature: 0.1, maxTokens: 1024, _settings.InterpretTimeoutSeconds, ct);
@@ -153,8 +175,9 @@ public sealed class LlamaServerModel : ILanguageModel, IDisposable
     public Task<string?> CompleteTextAsync(IReadOnlyList<ChatMessage> messages, CancellationToken ct) =>
         ChatAsync(messages, null, _settings.DialogueTemperature, _settings.MaxDialogueTokens, _settings.DialogueTimeoutSeconds, ct);
 
-    private async Task<string?> ChatAsync(IReadOnlyList<ChatMessage> messages, JsonObject? responseFormat, double temperature, int maxTokens, int timeoutSeconds, CancellationToken ct)
+    private async Task<string?> ChatAsync(IReadOnlyList<ChatMessage> messages, JsonObject? responseFormat, double temperature, int maxTokens, int timeoutSeconds, CancellationToken ct, bool isWarmup = false)
     {
+        if (!isWarmup) _warmupCts?.Cancel(); // the player is waiting: stop warming up
         if (Status != LlmStatus.Ready || _process == null || _process.HasExited) return null;
         var body = new JsonObject
         {

@@ -1,5 +1,15 @@
 # Development log
 
+## 2026-11-22 — Iteration 5: built-in AI engine, live AI dialogue
+- **Model chosen and verified**: Qwen3-4B-Instruct-2507, Q4_K_M GGUF (unsloth, revision a06e946), **Apache-2.0** confirmed on the official model card and LICENSE file. 2.5 GB, ~4 GB RAM. SHA-256 pinned.
+- **Windows AI engine bundled**: `llama-server.exe` cross-compiled from source with MinGW (AVX2, static; depends only on Windows system DLLs) via `tools/build_windows_llama.sh`; shipped in `runtime/llama/` by `tools/package_windows.sh`.
+- **One-time model download in-game** (`ModelDownloader`): resume, progress, cancel, SHA-256 verification before use; stored in the user data folder. Then fully offline.
+- **No preplanned dialogue when the AI runs**: every executive line is written live. Rejected drafts are retried once with the reason fed back. Scripted lines remain only as a labeled safety net when the AI is missing or failing.
+- **Speed work** (measured on a 4-core cloud VM: prompt ~37 tok/s, generation ~7 tok/s): rules interpreter handles clear instructions instantly (model only for ambiguous phrasing); stable per-executive system prompts so the server's prompt cache is reused (later replies process ~12 new tokens); background warm-up of all personas, cancelled the moment the player speaks; replies stream to the UI as each is ready with a real "typing…" indicator.
+- **Speech cleanup**: no markdown, no "Great question" filler, max 3 sentences; executives may not announce decisions ("Approved.") that only the player makes.
+- Bug found by real-model testing: relative model path broke server start when run from its own folder; now absolute.
+- Verified: 77/77 tests; Godot smoke test with the real model (AI ready in 4 s; CFO opposes / CIO supports, both AI-written). Not verified: the Windows `.exe` builds on real Windows, and real-PC speed (expected to be well above the cloud VM's).
+
 ## 2026-11-22 — Iteration 4: visual redesign (Rune / UI-UX Pro Max principles)
 - **Design tokens** (`game/scripts/UI/Palette.cs`): semantic surfaces (base/sunken/surface/elevated), no pure black or white, executive-gold accent (no default blue/purple), green/red reserved for data and always paired with ▲▼● symbols.
 - **Typography**: IBM Plex Sans for UI, IBM Plex Mono for every number; 12/14/16/18/24/32 scale, 16px body, semibold headings.

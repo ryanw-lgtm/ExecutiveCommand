@@ -36,15 +36,15 @@ public static partial class ResponseValidator
     public static DialogueCheck CheckDialogue(string? raw, ReplyContext ctx, Stance? stance)
     {
         if (string.IsNullOrWhiteSpace(raw)) return new(false, "", "empty");
-        string text = SpeakerPrefix().Replace(raw.Trim(), "").Trim().Trim('"').Trim();
-        text = Regex.Replace(text, @"\s+", " ");
+        string text = Clean(raw);
         if (text.Length < 2) return new(false, "", "too short");
         if (text.Length > 900) text = TrimToSentence(text, 900);
         string lower = text.ToLowerInvariant();
         if (!LooksLikeEnglishSpeech(text)) return new(false, "", "implausible text (model may be broken or misconfigured)");
         if (BreaksCharacter.Any(lower.Contains)) return new(false, "", "breaks character");
         if (text.Contains('{') && text.Contains('}')) return new(false, "", "structured output in dialogue");
-        if (ClaimsAuthorityActions.Any(lower.Contains)) return new(false, "", "claims an action the engine did not perform");
+        if (ClaimsAuthorityActions.Any(lower.Contains) || Regex.IsMatch(lower, @"^(approved|denied|rejected|granted)\b"))
+            return new(false, "", "speaks as if they made the decision; only the player decides here");
         if (stance is { Position: Position.Oppose or Position.Concerned } && StrongAgreement.Any(lower.Contains))
             return new(false, "", "contradicts computed stance");
 
@@ -77,6 +77,22 @@ public static partial class ResponseValidator
         if (words.Count >= 6 && fn < Math.Max(2, words.Count / 10)) return false;
         double avgLen = words.Average(w => w.Length);
         return avgLen is >= 2.5 and <= 9;
+    }
+
+    /// <summary>Turns model output into plain spoken text: no markdown, no filler opener, at most three sentences.</summary>
+    public static string Clean(string raw)
+    {
+        string t = raw.Trim();
+        t = Regex.Replace(t, @"(?m)^\s*(#+|[-*•]|\d+\.)\s+", "");   // headings, bullets, numbered lists
+        t = t.Replace("**", "").Replace("__", "");
+        t = Regex.Replace(t, @"(?<!\w)\*(?!\s)([^*]+)(?<!\s)\*(?!\w)", "$1"); // *emphasis*
+        t = Regex.Replace(t, @"\s+", " ").Trim();
+        t = SpeakerPrefix().Replace(t, "").Trim().Trim('"', '“', '”').Trim();
+        t = Regex.Replace(t, @"^(great|good|excellent|fair) (question|point)[^.!?]*[.!?—-]\s*", "", RegexOptions.IgnoreCase);
+        t = Regex.Replace(t, @"^(thank you|thanks) for (asking|raising|bringing)[^.!?]*[.!?—-]\s*", "", RegexOptions.IgnoreCase);
+        var sentences = Regex.Split(t, @"(?<=[.!?])\s+(?=[A-Z""'“])").Where(x => x.Length > 0).ToList();
+        if (sentences.Count > 3) t = string.Join(" ", sentences.Take(3));
+        return t.Length > 0 ? char.ToUpperInvariant(t[0]) + t[1..] : t;
     }
 
     private static string TrimToSentence(string text, int max)

@@ -62,9 +62,10 @@ public partial class MainMenu : Control
         brief.AddChild(Ui.Gap(8));
         brief.AddChild(Ui.Label("All organizations, people and figures are fictional.", Fonts.Sm, Palette.TextMuted));
         var briefCard = Ui.Card(brief, Palette.BgSurface, Palette.Border, 32);
-        briefCard.SizeFlagsHorizontal = SizeFlags.ExpandFill;
-        briefCard.SizeFlagsVertical = SizeFlags.ShrinkCenter;
-        row.AddChild(briefCard);
+        var right = Ui.VBox(16, briefCard, new AiPanel(main.Session));
+        right.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        right.SizeFlagsVertical = SizeFlags.ShrinkCenter;
+        row.AddChild(right);
     }
 }
 
@@ -135,8 +136,8 @@ public partial class SettingsScreen : Control
         col.AddChild(Ui.Heading("Settings", 30));
 
         // --- Local AI
-        var ai = Ui.VBox(8, Ui.Caption("Local AI (optional — the game is fully playable without it)"));
-        var enabled = new CheckBox { Text = "Use local AI for executive dialogue and natural-language interpretation", ButtonPressed = st.AiEnabled };
+        var ai = Ui.VBox(8, Ui.Caption("Local AI"), new AiPanel(main.Session));
+        var enabled = new CheckBox { Text = "Use the local AI for executive dialogue (recommended)", ButtonPressed = st.AiEnabled };
         ai.AddChild(enabled);
         var model = new OptionButton { SizeFlagsHorizontal = SizeFlags.ExpandFill };
         var models = GameSession.DiscoverModels().ToList();

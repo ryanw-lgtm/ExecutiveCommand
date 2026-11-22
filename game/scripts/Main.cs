@@ -25,7 +25,7 @@ public partial class Main : Control
         var args = OS.GetCmdlineUserArgs();
         if (args.Contains("--smoke-test")) { _ = SmokeTest.RunAsync(this); return; }
         ShowMainMenu();
-        if (Session.Settings.AiEnabled) _ = Session.StartAiAsync();
+        _ = Session.StartAiAsync(); // finds the model; if missing, the AI panel offers the one-time download
     }
 
     public void ApplyDisplaySettings()

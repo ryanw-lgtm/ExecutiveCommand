@@ -35,6 +35,8 @@ public partial class MeetingView : VBoxContainer, IGameView
     private CancellationTokenSource? _cts;
     private GameState? _boundState;
     private readonly StringBuilder _transcript = new();
+    private AiPanel _aiBanner = null!;
+    private readonly HashSet<MeetingReply> _shownLive = new(ReferenceEqualityComparer.Instance);
 
     public bool HasPendingConfirmation => _meeting?.HasPendingConfirmation == true;
 
@@ -80,6 +82,8 @@ public partial class MeetingView : VBoxContainer, IGameView
 
         _participants = Ui.HBox(20);
         AddChild(_participants);
+        _aiBanner = new AiPanel(game.Session, compact: true);
+        AddChild(_aiBanner);
 
         // The thread.
         _thread = Ui.VBox(14);
@@ -131,6 +135,7 @@ public partial class MeetingView : VBoxContainer, IGameView
         if (_meeting == null) StartMeeting();
         _confirmCard.Visible = _meeting?.HasPendingConfirmation == true;
         _confirmText.Text = _meeting?.PendingConfirmationPrompt ?? "";
+        _aiBanner.Visible = session.Phase != GameSession.AiPhase.Ready;
         RefreshIdeas();
     }
 
@@ -171,6 +176,9 @@ public partial class MeetingView : VBoxContainer, IGameView
         var roles = _attendees.Where(kv => kv.Value.ButtonPressed).Select(kv => kv.Key).ToList();
         if (roles.Count == 0) { _game.Toast("Choose at least one attendee.", Palette.Warning); return; }
         _meeting = new MeetingService(_game.Session.Engine!, roles, _game.Session.Llm);
+        // Live AI: show "typing…" while the model is really writing, and each reply the moment it's ready.
+        _meeting.Composing = x => ShowTyping(x.Name.StartsWith("Dr. ") ? "Dr. " + x.Name.Split(' ')[^1] : x.Name.Split(' ')[0], x.Role, x.Name);
+        _meeting.ReplyReady = r => { if (!r.AiGenerated) return; HideTyping(); AppendReply(r); _shownLive.Add(r); };
         Ui.Clear(_thread);
         _transcript.Clear();
         Ui.Clear(_participants);
@@ -239,7 +247,13 @@ public partial class MeetingView : VBoxContainer, IGameView
             _ => ("", Palette.TextSecondary),
         };
         if (word.Length > 0) header.AddChild(Ui.Pill(word, color));
-        if (reply.AiGenerated) { var ai = Ui.Pill("AI", Palette.Info); ai.TooltipText = "Worded by the local language model; the position itself comes from the simulation."; header.AddChild(ai); }
+        if (reply.AiGenerated) { var ai = Ui.Pill("AI", Palette.Info); ai.TooltipText = "Written live by the local AI; the position itself comes from the simulation."; header.AddChild(ai); }
+        else if (_game.Session.Phase != GameSession.AiPhase.Disabled)
+        {
+            var sc = Ui.Pill("scripted", Palette.TextMuted);
+            sc.TooltipText = "The AI wasn't available for this line" + (reply.FallbackReason != null ? $" ({reply.FallbackReason})" : "") + ", so a short scripted line was used.";
+            header.AddChild(sc);
+        }
         var bubble = Ui.Card(Ui.Label(reply.Text, Fonts.Base, Palette.TextPrimary, wrap: true), Palette.BgElevated, Palette.Border, 14);
         bubble.SizeFlagsHorizontal = SizeFlags.ExpandFill;
         var body = Ui.VBox(6, header, bubble);
@@ -340,9 +354,9 @@ public partial class MeetingView : VBoxContainer, IGameView
     {
         _send.Disabled = busy;
         _input.Editable = !busy;
-        _skip.Visible = busy && _game.Session.Settings.ReplyPacing != 0;
+        _skip.Visible = busy && _game.Session.Settings.ReplyPacing != 0 && _game.Session.Llm?.Status != Core.AI.Llm.LlmStatus.Ready;
         _cancelGen.Visible = busy && _game.Session.Llm?.Status == Core.AI.Llm.LlmStatus.Ready;
-        _thinking.Text = busy && _game.Session.Llm?.Status == Core.AI.Llm.LlmStatus.Ready ? "Executives are considering your words…" : "";
+        _thinking.Text = busy && _game.Session.Llm?.Status == Core.AI.Llm.LlmStatus.Ready ? "The AI is writing replies live on your PC — this can take a few seconds per person." : "";
     }
 
     private async Task WaitAsync(double seconds)
@@ -360,6 +374,7 @@ public partial class MeetingView : VBoxContainer, IGameView
         var s = _game.Session.State;
         foreach (var reply in r.Replies)
         {
+            if (_shownLive.Remove(reply)) continue; // already shown as it arrived from the AI
             if (pacing != ReplyPacing.Off && !_skipRequested && IsInsideTree() && s.TryExec(reply.Speaker) is { } x)
             {
                 var t = TypingPace.For(x, reply.Text, pacing);

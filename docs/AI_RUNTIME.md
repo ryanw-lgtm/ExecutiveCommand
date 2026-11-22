@@ -1,5 +1,7 @@
 # Local AI runtime
 
+> **Current production setup (Iteration 5):** Qwen3-4B-Instruct-2507 Q4_K_M (Apache-2.0), downloaded in-game on first launch and SHA-256 verified; Windows `llama-server.exe` cross-compiled from source and bundled. See DEVLOG for measured performance. Next: a Vulkan (GPU) build for faster replies on gaming PCs.
+
 ## How it works
 
 * `LlamaServerModel` launches the bundled `llama-server` on `127.0.0.1` on a free port, polls `/health`
