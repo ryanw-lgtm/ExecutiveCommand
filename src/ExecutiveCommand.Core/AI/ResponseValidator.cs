@@ -47,6 +47,8 @@ public static partial class ResponseValidator
             return new(false, "", "speaks as if they made the decision; only the player decides here");
         if (stance is { Position: Position.Oppose or Position.Concerned } && StrongAgreement.Any(lower.Contains))
             return new(false, "", "contradicts computed stance");
+        if (stance is { Position: Position.Support } && Regex.IsMatch(lower, @"\b(i (don't|do not|can't|cannot|won't) (support|back)|i'm against|i am against|i oppose|is the only (path|option|solution|way)|not the right (choice|option))\b"))
+            return new(false, "", "argues against the position it is supposed to hold");
 
         // Every dollar figure must come from the facts the executive was given or from the player.
         var allowed = new List<decimal>();

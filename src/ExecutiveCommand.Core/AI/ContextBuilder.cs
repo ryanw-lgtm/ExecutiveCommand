@@ -34,7 +34,7 @@ public static class ContextBuilder
                 f.Add($"Documented data-loss window (RPO): {t.ReportedRpoHours:0.#} hours; target {t.TargetRpoHours:0} hour");
                 f.Add(t.HasSecondarySite ? "A secondary recovery site is in place" : "There is no secondary site that can run the EHR");
                 foreach (var p in s.Proposals.Where(p => p.EffectKey.StartsWith("dr_") && p.Status is ProposalStatus.Pending or ProposalStatus.Deferred or ProposalStatus.AwaitingApproval))
-                    f.Add($"{p.Title}: {M(p.Capex)} capital, {M(p.AnnualOpex)} per year, about {p.DurationDays / 30} months");
+                    f.Add($"{p.Title}: {M(p.Capex)} capital, {M(p.AnnualOpex)} per year, about {p.DurationDays / 30} months, {PlannedRecovery(p.EffectKey)}");
                 if (t.CloudDrCertificationKnown is bool known) f.Add(known ? "Proof of concept: the vendor supports cloud-hosted EHR recovery" : "Proof of concept: the vendor will not support cloud-hosted EHR recovery");
                 foreach (var pr in s.Projects.Where(p => p.EffectKey.StartsWith("dr_")))
                     f.Add($"Project {pr.Name}: {pr.Status}, {pr.Progress:P0} complete");
@@ -79,6 +79,15 @@ public static class ContextBuilder
         }
         return f;
     }
+
+    /// <summary>The planning estimate the organization has for each DR option (what it is designed to achieve, not a guarantee).</summary>
+    public static string PlannedRecovery(string effectKey) => effectKey switch
+    {
+        "dr_onprem" => "designed to recover the EHR in about 8 hours (better than today, still above the 4-hour target)",
+        "dr_hybrid" => "designed to recover the EHR in about 6 hours (better than today, still above the 4-hour target)",
+        "dr_cloud" => "designed to recover the EHR in about 4 hours, but only if the EHR vendor supports running it in the cloud (unconfirmed)",
+        _ => "",
+    };
 
     public static string RoleBrief(GameState s, Executive x)
     {

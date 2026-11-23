@@ -68,7 +68,11 @@ public static class StanceEngine
         var cheaper = s.Proposals.FirstOrDefault(a => a.SupersedesId == p.Id && a.Status is ProposalStatus.Pending or ProposalStatus.Deferred or ProposalStatus.AwaitingApproval);
         if (cheaper != null) st.Facts.Add($"Alternative on the table: {cheaper.Title}, {M(cheaper.Capex)} capital");
         st.Facts.Add($"Technology capital remaining this fiscal year: {M(s.Finance.TechCapitalBudgetRemaining)}");
-        if (isDr) st.Facts.Add($"Current documented recovery time: {t.ReportedRtoHours:0} hours vs {t.TargetRtoHours:0}-hour target");
+        if (isDr)
+        {
+            st.Facts.Add($"Current documented recovery time: {t.ReportedRtoHours:0} hours vs {t.TargetRtoHours:0}-hour target");
+            st.Facts.Add($"{p.Title} is {AI.ContextBuilder.PlannedRecovery(p.EffectKey)}");
+        }
 
         switch (x.Role)
         {

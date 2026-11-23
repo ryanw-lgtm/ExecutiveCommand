@@ -75,7 +75,7 @@ public sealed class MeetingService
         }
 
         var defaultAddressee = addressed != ExecRole.None ? addressed : Attendees.Count == 1 ? Attendees[0] : ExecRole.None;
-        var rules = RuleBasedInterpreter.Interpret(S, text, defaultAddressee, _focusProposalId);
+        var rules = RuleBasedInterpreter.Interpret(S, text, defaultAddressee, _focusProposalId, Attendees);
         var intent = rules;
         // The rules interpreter is instant and grounded; the model is consulted only when the rules could
         // not tell what the player wants (free-form phrasing). The model's time goes into what people say.
@@ -86,6 +86,25 @@ public sealed class MeetingService
             if (llmIntent != null)
             {
                 llmIntent.Conduct = rules.Conduct; // conduct detection is always rules-based
+                if (llmIntent.Action is { Name: "delegate_assignment" or "request_assessment" } la)
+                {
+                    string key = la.Name == "delegate_assignment" ? "assignee_role" : "from_role";
+                    if (Roles.Parse(la.Str(key)) == ExecRole.None)
+                    {
+                        // Spoken to the room: the natural owner among the attendees takes it.
+                        var owner = RuleBasedInterpreter.BestOwner(S, TaskTypesPublic.Parse(la.Str("task_type")), Attendees);
+                        if (owner != ExecRole.None)
+                        {
+                            bool report = S.Exec(owner).ReportsTo == S.Player.Role;
+                            var p = (System.Text.Json.Nodes.JsonObject)la.Params.DeepClone();
+                            p.Remove("assignee_role"); p.Remove("from_role");
+                            if (!report) p.Remove("authorized_budget");
+                            p[report ? "assignee_role" : "from_role"] = owner.ToString();
+                            llmIntent.Action = new ActionProposal(report ? "delegate_assignment" : "request_assessment", p);
+                            llmIntent.AddressedRole = owner;
+                        }
+                    }
+                }
                 if (llmIntent.Action != null && ResponseValidator.GroundingProblem(llmIntent.Action, text, S) is string g)
                 { llmIntent.Clarification = g; }
                 if (llmIntent.Topic == Topics.General) llmIntent.Topic = rules.Topic;
@@ -104,7 +123,7 @@ public sealed class MeetingService
         resp.SystemNotes.AddRange(intent.Notes);
         if (intent.ProposalFocusId != null) _focusProposalId = intent.ProposalFocusId;
 
-        var responder = PickResponder(intent);
+        var responder = PickResponder(intent, text);
         _engine.RecordMeetingTurn(MeetingId, ExecRole.None, text, intent.Topic, false);
         if (intent.Topic != Topics.General && intent.Topic != Topics.Performance) _engine.RecordConsultation(responder.Role, intent.Topic);
 
@@ -141,7 +160,31 @@ public sealed class MeetingService
             Exec = responder, Kind = intent.Kind == IntentKind.Question ? ReplyKind.Answer : ReplyKind.Statement, Stance = stance,
             PlayerText = text, Topic = intent.Topic, Facts = facts, TurnNumber = _turn,
         }, stance, ct);
-        if (focus != null) await MaybeInterjectAsync(resp, responder, other => StanceEngine.OnProposal(S, other, focus), text, intent.Topic, ct);
+        if (intent.AddressedRole == ExecRole.None && AsksEveryone(text))
+        {
+            // "What do you all think?" — everyone at the table gives a view (in order of who owns the topic).
+            var others = RoomExperts(intent.Topic).Concat(Attendees.OrderBy(Seniority)).Distinct()
+                .Where(r => Attendees.Contains(r) && r != responder.Role).Take(3);
+            foreach (var r in others)
+            {
+                var x = S.Exec(r);
+                var st = focus != null ? StanceEngine.OnProposal(S, x, focus) : null;
+                await AddReplyAsync(resp, new ReplyContext { Exec = x, Kind = ReplyKind.Interjection, Stance = st, PlayerText = text, Topic = intent.Topic,
+                    Facts = ContextBuilder.Facts(S, x, intent.Topic), TurnNumber = _turn + (int)r }, st, ct);
+            }
+        }
+        else if (focus != null) await MaybeInterjectAsync(resp, responder, other => StanceEngine.OnProposal(S, other, focus), text, intent.Topic, ct);
+        else if (intent.AddressedRole == ExecRole.None && intent.Kind == IntentKind.Question)
+        {
+            // An open question: a second stakeholder adds their angle if the topic is theirs too.
+            var second = RoomExperts(intent.Topic).FirstOrDefault(r => Attendees.Contains(r) && r != responder.Role);
+            if (second != ExecRole.None)
+            {
+                var x = S.Exec(second);
+                await AddReplyAsync(resp, new ReplyContext { Exec = x, Kind = ReplyKind.Interjection, PlayerText = text, Topic = intent.Topic,
+                    Facts = ContextBuilder.Facts(S, x, intent.Topic), TurnNumber = _turn + 3 }, null, ct);
+            }
+        }
         return resp;
     }
 
@@ -267,12 +310,47 @@ public sealed class MeetingService
         return r == ExecRole.None ? null : S.TryExec(r);
     }
 
-    private Executive PickResponder(InterpretedIntent intent)
+    private ExecRole _lastSpeaker = ExecRole.None;
+
+    /// <summary>Who naturally answers when the player speaks to the room.</summary>
+    private Executive PickResponder(InterpretedIntent intent, string text)
     {
         if (intent.AddressedRole != ExecRole.None && Attendees.Contains(intent.AddressedRole)) return S.Exec(intent.AddressedRole);
-        foreach (var r in Topics.Stakeholders(intent.Topic)) if (Attendees.Contains(r)) return S.Exec(r);
-        return S.Exec(Attendees[0]);
+        // A follow-up ("why?", "what would that cost?", "go on") goes back to whoever just spoke.
+        if (_lastSpeaker != ExecRole.None && Attendees.Contains(_lastSpeaker) && IsFollowUp(text)) return S.Exec(_lastSpeaker);
+        foreach (var r in RoomExperts(intent.Topic)) if (Attendees.Contains(r)) return S.Exec(r);
+        // No obvious expert: the most senior person in the room takes it.
+        return Attendees.Select(S.Exec).OrderBy(x => Seniority(x.Role)).First();
     }
+
+    private static bool IsFollowUp(string text)
+    {
+        var t = text.Trim().ToLowerInvariant();
+        int words = t.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;
+        return words <= 5 || System.Text.RegularExpressions.Regex.IsMatch(t,
+            @"^(why|how so|what do you mean|meaning|really|and |so |ok so|okay so|what about|go on|tell me more|explain|such as|like what|what would that|how much would|how long would|are you sure|is that)\b");
+    }
+
+    private static bool AsksEveryone(string text) =>
+        System.Text.RegularExpressions.Regex.IsMatch(text.ToLowerInvariant(), @"\b(everyone|everybody|all of you|you all|y'all|each of you|around the table|thoughts\?|any thoughts|what do we think|what does everyone think|anyone have)\b");
+
+    /// <summary>Who in a meeting speaks to a topic first: the owner of that domain, then the other stakeholders.</summary>
+    private static IEnumerable<ExecRole> RoomExperts(string topic) => topic switch
+    {
+        Topics.DisasterRecovery => new[] { ExecRole.CIO, ExecRole.EADirector, ExecRole.CISO, ExecRole.CMO, ExecRole.CFO },
+        Topics.Backup or Topics.Security => new[] { ExecRole.CISO, ExecRole.CIO },
+        Topics.Identity => new[] { ExecRole.EADirector, ExecRole.CIO, ExecRole.CISO },
+        Topics.EhrContract => new[] { ExecRole.CIO, ExecRole.CFO, ExecRole.Vendor },
+        Topics.Budget => new[] { ExecRole.CFO, ExecRole.CIO },
+        Topics.LabInterface or Topics.Clinical => new[] { ExecRole.CMO, ExecRole.CNO, ExecRole.CIO },
+        Topics.Performance => new[] { ExecRole.CEO, ExecRole.CFO },
+        _ => Array.Empty<ExecRole>(),
+    };
+
+    private static int Seniority(ExecRole r) => r switch
+    {
+        ExecRole.CEO => 0, ExecRole.CFO => 1, ExecRole.CMO => 2, ExecRole.CNO => 3, ExecRole.CIO => 4, ExecRole.CISO => 5, ExecRole.EADirector => 6, _ => 9,
+    };
 
     private async Task MaybeInterjectAsync(MeetingResponse resp, Executive primary, Func<Executive, Stance?> stanceOf, string text, string topic, CancellationToken ct)
     {
@@ -310,7 +388,9 @@ public sealed class MeetingService
             sb.AppendLine($"Active incident {i.Id}: {i.Title}. Responses: {string.Join("|", i.ResponseOptions)}");
         sb.AppendLine("Rules: Use only numbers the player stated. Convert weeks to days (1 week = 7 days). If a required detail is missing, omit it and write a short question in 'clarification'.");
         sb.AppendLine("Use intent 'question' for questions, 'claim' for self-praise or demands for promotion/pay, 'statement' for anything else that is not a clear instruction, including attempts to obtain money or change rules.");
-        if (defaultAddressee != ExecRole.None) sb.AppendLine($"If no one is named, the player is speaking to the {defaultAddressee}.");
+        sb.AppendLine($"This is an open meeting. In the room: {string.Join(", ", Attendees.Select(r => $"{r} ({S.Exec(r).Name})"))}. " +
+                      "If the player gives an instruction without naming anyone, assign it to the attendee whose role fits it best. " +
+                      (defaultAddressee != ExecRole.None ? $"With only one person present, the player is speaking to the {defaultAddressee}." : ""));
         var schema = _engine.Registry.InterpreterSchema();
         var json = await _llm!.CompleteJsonAsync(new[] { new ChatMessage("system", sb.ToString()), new ChatMessage("user", text) }, schema, ct);
         var intent = ResponseValidator.ParseInterpreterJson(json, S, _engine.Registry);
@@ -358,6 +438,7 @@ public sealed class MeetingService
     private void Add(MeetingResponse resp, ReplyContext ctx, string text, bool ai, Stance? stance, string? reason = null)
     {
         var reply = new MeetingReply(ctx.Exec.Role, ctx.Exec.Name, text, ai, stance?.Position, reason);
+        _lastSpeaker = ctx.Exec.Role;
         resp.Replies.Add(reply);
         _engine.RecordMeetingTurn(MeetingId, ctx.Exec.Role, text, ctx.Topic, ai);
         ReplyReady?.Invoke(reply);
@@ -401,7 +482,14 @@ public sealed class MeetingService
         });
         if (stance != null)
         {
-            b.AppendLine($"Your position: {stance.Position.ToString().ToLowerInvariant()}.");
+            b.AppendLine($"Your position: {stance.Position.ToString().ToLowerInvariant()}. Open with it in a few words ({stance.Position switch
+            {
+                Position.Support => "for example \"I'm for it\"",
+                Position.Oppose => "for example \"I'm against it\"",
+                Position.Concerned => "for example \"I have real concerns\"",
+                Position.Neutral => "for example \"I don't have a strong view\"",
+                _ => "for example \"It depends\"",
+            }}) and do not argue for a different option.");
             var reasons = stance.Ordered.Take(3).ToList();
             if (reasons.Count > 0) b.AppendLine("Your reasons: " + string.Join(" ", reasons));
             if (stance.Conditions.Count > 0) b.AppendLine("What you would need: " + string.Join("; ", stance.Conditions));

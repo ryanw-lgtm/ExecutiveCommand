@@ -87,7 +87,7 @@ public partial class MeetingView : VBoxContainer, IGameView
         AddThemeConstantOverride("separation", 12);
 
         AddChild(Ui.HBox(16, Ui.Heading("Meeting Room", 28), Ui.Spacer(),
-            Ui.Label("Say who should do what, by when, with how much money.", Fonts.Sm, Palette.TextSecondary)));
+            Ui.Label("Talk to the room naturally — the right person picks it up. Name someone only if you want them specifically.", Fonts.Sm, Palette.TextSecondary)));
 
         // Who is in the room.
         var presets = Ui.HBox(8, Ui.Caption("Quick meetings"));
@@ -137,7 +137,7 @@ public partial class MeetingView : VBoxContainer, IGameView
         AddChild(Ui.HBox(12, Ui.Caption("Ideas"), _ideas));
 
         _thinking = Ui.Label("", Fonts.Xs, Palette.TextMuted);
-        _input = new LineEdit { PlaceholderText = "Type what you want to say and press Enter — or pick an idea above", SizeFlagsHorizontal = SizeFlags.ExpandFill, MaxLength = 1000, CustomMinimumSize = new Vector2(0, 48) };
+        _input = new LineEdit { PlaceholderText = "Say anything to the room — e.g. \"Verify the backups actually restore. Three weeks.\" — then press Enter", SizeFlagsHorizontal = SizeFlags.ExpandFill, MaxLength = 1000, CustomMinimumSize = new Vector2(0, 48) };
         _input.AddThemeFontSizeOverride("font_size", Fonts.Base);
         _input.TextSubmitted += _text => _ = Send();
         _input.GuiInput += OnInputKey;
@@ -225,7 +225,7 @@ public partial class MeetingView : VBoxContainer, IGameView
         var divider = Ui.Label($"{s.CurrentDate:dddd, MMMM d} · meeting started", Fonts.Xs, Palette.TextMuted);
         divider.HorizontalAlignment = HorizontalAlignment.Center;
         _thread.AddChild(divider);
-        var hint = Ui.Empty("The room is listening.", "Ask a question, give an instruction with a deadline, or pick one of the ideas below.", "chats-circle");
+        var hint = Ui.Empty("The room is listening.", "Speak to everyone: ask a question, give an instruction with a deadline, or ask \"what does everyone think?\". Whoever owns the topic answers.", "chats-circle");
         hint.SetMeta("empty", true);
         _thread.AddChild(hint);
         _confirmCard.Visible = false;

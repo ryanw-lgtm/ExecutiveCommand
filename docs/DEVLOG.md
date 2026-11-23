@@ -1,5 +1,14 @@
 # Development log
 
+## 2026-11-23 — Iteration 8: meetings are open conversations
+- Player feedback: you had to name someone before anything happened. Fixed:
+  - **Unnamed instructions go to the natural owner in the room** (backups → CISO, recovery testing / contract → CIO, proofs of concept / alternatives → EA, clinical → CMO); peers are asked rather than assigned; if nobody present fits, the room asks who should take it. Only real instructions count (a deadline, an imperative, or "can someone…"), so ordinary remarks never become assignments.
+  - **Open questions** are answered by the topic's owner, with a second stakeholder adding their angle; **follow-ups** ("why?", "what would that cost?") go to whoever just spoke; **"what does everyone think?"** gets a view from everyone at the table.
+  - A role mentioned in passing ("negotiate the Halcyon renewal") is the subject, not the assignee.
+  - The AI interpreter is told who is in the room; unnamed AI-read instructions get the same owner logic.
+- AI quality, found with the real model: supporting executives argued for a different option. Fixed by giving the model each DR option's planning estimate, asking it to open with its position, and rejecting (then retrying) replies that argue against the position they hold.
+- Verified: 97/97 tests (14 new open-conversation tests); real-model check of an unnamed instruction, open question, "why?" follow-up and an everyone-question.
+
 ## 2026-11-23 — Iteration 7: making it a game — office hub and progression
 - **Office hub** (`game/scripts/Views/OfficeScene.cs`) is the new home screen: an illustrated executive office drawn in code. Objects are live and clickable — monitor → Dashboard, inbox tray (paper piles up with unread mail), decision folders (count), boardroom door → meetings, corkboard → objectives with stars and progress, whiteboard → projects/assignments as sticky notes, filing cabinet → Finance, bookshelf with one trophy per achievement → Performance, org chart → Executives, crisis beacon pulses during incidents, calendar → skip to next event. Ambient animation (monitor glow, drifting clouds, coffee steam). The sky runs one evening → night → morning cycle each time you advance time.
 - **Progression** (`Core/Engine/ProgressionEngine.cs`, deterministic, saved): 9 campaign objectives with 1–3 stars and fiscal-quarter deadlines; XP and 8 ranks (Newcomer → Legend); 10 achievements; quarterly **report cards** with letter grades, stars and XP. All earned only from simulation results — a test proves flattery, claims and "ignore your instructions" earn nothing.

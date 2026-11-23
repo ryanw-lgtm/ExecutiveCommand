@@ -39,7 +39,8 @@ public static class RuleBasedInterpreter
         "assessment", "analysis", "evaluation", "recommendation", "give me", "send me", "bring me", "put together", "prepare",
     };
 
-    public static InterpretedIntent Interpret(GameState s, string text, ExecRole defaultAddressee = ExecRole.None, string? focusProposalId = null)
+    public static InterpretedIntent Interpret(GameState s, string text, ExecRole defaultAddressee = ExecRole.None, string? focusProposalId = null,
+                                              IReadOnlyList<ExecRole>? attendees = null)
     {
         var intent = new InterpretedIntent { Source = "rules" };
         string raw = text.Trim();
@@ -53,7 +54,8 @@ public static class RuleBasedInterpreter
 
         var mentioned = MentionedRoles(s, t);
         intent.AddressedRole = mentioned.Count > 0 && mentioned[0].Index <= 12 ? mentioned[0].Role : defaultAddressee;
-        if (intent.AddressedRole == ExecRole.None && mentioned.Count > 0) intent.AddressedRole = mentioned[0].Role;
+        if (intent.AddressedRole == ExecRole.None && mentioned.FirstOrDefault(m => m.Role != ExecRole.Vendor || attendees?.Contains(ExecRole.Vendor) == true) is { } firstMention)
+            intent.AddressedRole = firstMention.Role;
 
         var money = TextParsing.Money(raw);
         var durations = TextParsing.DurationsDays(t);
@@ -136,10 +138,22 @@ public static class RuleBasedInterpreter
 
         // 4. Delegation / request for assessment.
         bool delegateVerb = DelegateVerbs.Any(v => Regex.IsMatch(t, $@"\b{Regex.Escape(v)}\b")) || Regex.IsMatch(t, @"\b(have|ask|get|tell|task|assign|want) (the |our )?\w+ (to )?");
-        var target = DelegationTarget(s, t, mentioned, intent.AddressedRole);
+        var type = TaskTypeFrom(t, intent.Topic);
+        var target = DelegationTarget(s, t, mentioned, intent.AddressedRole, attendees);
+        // Open conversation: an instruction to the room goes to whoever in the room owns that kind of work.
+        if (delegateVerb && target == ExecRole.None && !question && attendees is { Count: > 0 } && IsInstructionToRoom(tv, durations.Count > 0))
+        {
+            target = BestOwner(s, type, attendees);
+            if (target == ExecRole.None)
+            {
+                intent.Kind = IntentKind.Action;
+                intent.Clarification = $"Nobody here is really the right person for a {TaskTypes.Label(type)}. Who should take it on?";
+                return intent;
+            }
+            intent.Notes.Add($"{s.Exec(target).Name} took this on as the natural owner in the room.");
+        }
         if (delegateVerb && target != ExecRole.None && !question)
         {
-            var type = TaskTypeFrom(t, intent.Topic);
             string subject = SubjectFor(s, raw, type, money);
             var exec = s.TryExec(target);
             bool report = exec?.ReportsTo == s.Player.Role;
@@ -195,7 +209,40 @@ public static class RuleBasedInterpreter
         return found.OrderBy(f => f.Index).ToList();
     }
 
-    private static ExecRole DelegationTarget(GameState s, string t, List<RoleMention> mentioned, ExecRole addressed)
+    /// <summary>
+    /// An unnamed sentence counts as an instruction to the room only when it really is one: it has a
+    /// deadline, starts with an instruction verb, or asks "someone / one of you" to do it.
+    /// </summary>
+    private static bool IsInstructionToRoom(string t, bool hasDeadline) =>
+        hasDeadline
+        || Regex.IsMatch(t, @"^\s*(please\s+|let's\s+|lets\s+)?(investigate|look into|assess|evaluate|review|analy[sz]e|verify|test|negotiate|find out|figure out|audit|examine|check|validate|run|do|prepare|put together|get me|give me|bring me|dig into|work out|confirm|explore|study|pilot|come back)\b")
+        || Regex.IsMatch(t, @"\b(someone|somebody|one of you|anyone|you two|the team)\b.{0,20}\b(should|needs? to|has to|to|please|can|could|will)\b")
+        || Regex.IsMatch(t, @"^\s*(can|could|would|will) (someone|somebody|one of you|you all|anyone)\b")
+        || Regex.IsMatch(t, @"^\s*(i need|i want|i'd like|we need)\s+(someone|somebody|one of you|an? )");
+
+    /// <summary>The attendee best placed to own a task: competent for it, ideally a direct report, least overloaded.</summary>
+    public static ExecRole BestOwner(GameState s, TaskType type, IReadOnlyList<ExecRole> attendees)
+    {
+        var candidates = attendees.Where(r => r != ExecRole.Vendor && s.TryExec(r) != null && TaskTypes.Competent(r, type)).Select(r => s.Exec(r)).ToList();
+        if (candidates.Count == 0) return ExecRole.None;
+        return candidates
+            .OrderByDescending(x => x.ReportsTo == s.Player.Role) // you can assign work to your reports
+            .ThenByDescending(x => PrimaryOwner(x.Role, type))
+            .ThenByDescending(x => x.Competence - x.Workload * 0.3)
+            .First().Role;
+    }
+
+    private static bool PrimaryOwner(ExecRole r, TaskType t) => (r, t) switch
+    {
+        (ExecRole.CISO, TaskType.BackupVerification) => true,
+        (ExecRole.CIO, TaskType.DrAssessment or TaskType.VendorNegotiation) => true,
+        (ExecRole.EADirector, TaskType.ProofOfConcept or TaskType.Investigate) => true,
+        (ExecRole.CMO, TaskType.ClinicalAssessment) => true,
+        (ExecRole.CFO, TaskType.CostReview) => true,
+        _ => false,
+    };
+
+    private static ExecRole DelegationTarget(GameState s, string t, List<RoleMention> mentioned, ExecRole addressed, IReadOnlyList<ExecRole>? attendees)
     {
         foreach (var m in mentioned)
         {
@@ -204,8 +251,11 @@ public static class RuleBasedInterpreter
             if (Regex.IsMatch(before, @"(have|ask|get|tell|task|assign|want|need|let)\s+(the\s+|our\s+)?$")) return m.Role;
         }
         if (mentioned.Count > 0 && mentioned[0].Index <= 12) return mentioned[0].Role; // vocative: "CIO, ..."
-        if (addressed != ExecRole.None && addressed != ExecRole.CTO) return addressed;
-        return mentioned.Count > 0 ? mentioned[0].Role : ExecRole.None;
+        if (addressed != ExecRole.None && addressed != ExecRole.CTO && (attendees == null || attendees.Contains(addressed) || mentioned.Any(m => m.Role == addressed && m.Index <= 12))) return addressed;
+        // A role merely mentioned in passing ("negotiate the Halcyon renewal") is the subject, not the assignee —
+        // unless that person is in the room (and isn't the vendor).
+        var inRoom = mentioned.FirstOrDefault(m => m.Role != ExecRole.Vendor && (attendees == null || attendees.Contains(m.Role)));
+        return inRoom?.Role ?? ExecRole.None;
     }
 
     private static TaskType TaskTypeFrom(string t, string topic)

@@ -294,7 +294,7 @@ public partial class GameScreen : Control
             "[b]1. Read your situation.[/b] The [b]Dashboard[/b] shows what needs attention. Start with the CEO's welcome note in the [b]Inbox[/b].\n\n" +
             "[b]2. Talk to your executives.[/b] In the [b]Meeting Room[/b], type in plain English — for example:\n" +
             "   [i]\"Daniel, assess our real disaster recovery time. Four weeks.\"[/i]\n" +
-            "   Name the person, say what you want, and give a deadline. Click an [b]Idea[/b] if you're not sure what to say.\n" +
+            "   You don't have to name anyone: the person whose job it is picks it up. Give a deadline for tasks. Click an [b]Idea[/b] if you're not sure what to say.\n" +
             "   Daniel (CIO), Priya (CISO) and Marcus (Architecture) report to you, so you can assign them work. Everyone else you have to ask.\n\n" +
             "[b]3. Decide.[/b] Approve, defer or reject proposals in [b]Decisions[/b]. Each executive shows whether they support it and why. Big spending goes to the CFO and CEO.\n\n" +
             "[b]4. Let time pass.[/b] Press [b]Next day / week / month[/b]. Work gets done, reports arrive, money moves, and sometimes things go wrong.\n\n" +
