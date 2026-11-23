@@ -66,6 +66,15 @@ public abstract partial class StateView : VBoxContainer, IGameView
 public partial class DashboardView : StateView
 {
     public override string Title => "Executive Dashboard";
+    private readonly Dictionary<string, double> _shown = new();
+
+    /// <summary>(from, to) for a value: counts up from 0 the first time, then from the last value shown.</summary>
+    private (double From, double To, Func<double, string> Format) Anim(string key, double to, Func<double, string> fmt)
+    {
+        double from = _shown.TryGetValue(key, out var v) ? v : 0;
+        _shown[key] = to;
+        return (from, to, fmt);
+    }
     public DashboardView() { }
     public DashboardView(GameScreen g) : base(g) { }
 
@@ -80,6 +89,31 @@ public partial class DashboardView : StateView
 
         if (s.Outcome != GameOutcome.InProgress)
             Body.AddChild(Ui.AccentCard(Ui.Label("Your tenure as CTO has ended. Review the record in Performance, then start a new career from the menu.", Fonts.Base, Palette.TextPrimary, wrap: true), Palette.Danger));
+
+        // ── "While you were away": everything that arrived during the last time advance.
+        if (Game.Digest.Count > 0)
+        {
+            var dg = Ui.VBox(8, Ui.HBox(8, Ui.Caption($"While you were away · {Game.DigestNote}"), Ui.Spacer(),
+                Ui.Button("Dismiss", Game.DismissDigest)));
+            foreach (var m in Game.Digest.AsEnumerable().Reverse().Take(6))
+            {
+                var (icon, col) = m.Kind switch
+                {
+                    MessageKind.Incident => ("warning-circle", Palette.Danger), MessageKind.Escalation => ("warning-circle", Palette.Warning),
+                    MessageKind.Review => ("medal", Palette.Accent), MessageKind.Finance => ("chart-line-up", Palette.Info), _ => ("tray", Palette.TextSecondary),
+                };
+                var date = Ui.Num(m.Date.ToString("MMM dd"), Fonts.Sm, Palette.TextMuted);
+                date.CustomMinimumSize = new Vector2(60, 0);
+                var id = m.Id;
+                var open = Ui.Button("Open", () => Game.OpenInbox(id));
+                open.CustomMinimumSize = new Vector2(84, 30);
+                dg.AddChild(Ui.HBox(12, Ui.Icon(icon, 18, col), date, Ui.Label(m.Subject, Fonts.Base, m.Read ? Palette.TextSecondary : Palette.TextPrimary, wrap: true), open));
+            }
+            if (Game.Digest.Count > 6) dg.AddChild(Ui.Label($"…and {Game.Digest.Count - 6} more in the Inbox.", Fonts.Sm, Palette.TextMuted));
+            var dgCard = Ui.AccentCard(dg, Game.Digest.Any(m => m.Kind == MessageKind.Incident) ? Palette.Danger : Palette.Accent);
+            Body.AddChild(dgCard);
+            Motion.FadeIn(dgCard, 0.2, 0);
+        }
 
         // ── Row 1: attention (wide) + financial pulse (narrow)
         var row1 = Ui.HBox(16);
@@ -112,25 +146,34 @@ public partial class DashboardView : StateView
 
         var pulse = Ui.VBox(10, Ui.Caption("Financial pulse"));
         var margins = hist.Where(h => h.OperatingMargin != null).Select(h => h.OperatingMargin!.Value * 100).ToArray();
-        var marginRow = Ui.HBox(12, Ui.Num(last == null ? "—" : $"{last.OperatingMargin * 100:0.0}%", 32, last == null ? Palette.TextPrimary : Palette.ForScore(last.OperatingMargin * 100, 2.5, 0)), Ui.Spacer());
+        var marginLabel = Ui.Num(last == null ? "—" : $"{last.OperatingMargin * 100:0.0}%", 32, last == null ? Palette.TextPrimary : Palette.ForScore(last.OperatingMargin * 100, 2.5, 0));
+        if (last != null) { var a = Anim("margin", last.OperatingMargin * 100, v => $"{v:0.0}%"); marginLabel.Ready += () => Ui.CountTo(marginLabel, a.From, a.To, a.Format); }
+        var marginRow = Ui.HBox(12, marginLabel, Ui.Spacer());
         if (margins.Length >= 3) marginRow.AddChild(new Sparkline { Values = margins, LineColor = Palette.TextSecondary, SizeFlagsVertical = SizeFlags.ShrinkCenter });
         pulse.AddChild(Ui.VBox(0, Ui.Label("Operating margin", Fonts.Sm, Palette.TextSecondary), marginRow,
             Ui.Label(last == null ? "Appears after the first month-end close." : $"{new DateTime(last.Year, last.Month, 1):MMMM} close · healthy is 2–4%", Fonts.Xs, Palette.TextMuted)));
         pulse.AddChild(new HSeparator());
-        void Line(string name, string value, Control? trend = null, string? tip = null)
+        void Line(string name, string value, Control? trend = null, string? tip = null, (double From, double To, Func<double, string> Format)? count = null)
         {
-            var r = Ui.HBox(8, Ui.Label(name, Fonts.Sm, Palette.TextSecondary), Ui.Spacer(), Ui.Num(value, Fonts.Base));
+            var num = Ui.Num(value, Fonts.Base);
+            if (count is { } cnt) num.Ready += () => Ui.CountTo(num, cnt.From, cnt.To, cnt.Format);
+            var r = Ui.HBox(8, Ui.Label(name, Fonts.Sm, Palette.TextSecondary), Ui.Spacer(), num);
             if (trend != null) { trend.CustomMinimumSize = new Vector2(84, 0); r.AddChild(trend); }
             if (tip != null) r.TooltipText = tip;
             pulse.AddChild(r);
         }
         decimal dailyOpex = (last?.Opex ?? 93_500_000m) / 30m;
         Line("Cash", SimulationEngine.Money(f.Cash), prev != null && now != null ? Ui.Trend((double)((now.Cash - prev.Cash) / 1_000_000m), true, "+0.0;-0.0", "M") : null,
-            $"About {(double)(f.Cash / Math.Max(1, dailyOpex)):0} days of operating costs on hand.");
-        Line("Tech capital left", SimulationEngine.Money(f.TechCapitalBudgetRemaining), null, $"Remaining from the {SimulationEngine.Money(f.TechCapitalBudgetAnnual)} technology capital budget this fiscal year.");
+            $"About {(double)(f.Cash / Math.Max(1, dailyOpex)):0} days of operating costs on hand.",
+            Anim("cash", (double)f.Cash, v => SimulationEngine.Money((decimal)v)));
+        Line("Tech capital left", SimulationEngine.Money(f.TechCapitalBudgetRemaining), null, $"Remaining from the {SimulationEngine.Money(f.TechCapitalBudgetAnnual)} technology capital budget this fiscal year.",
+            Anim("capital", (double)f.TechCapitalBudgetRemaining, v => SimulationEngine.Money((decimal)v)));
         decimal approved = s.Savings.Where(v => v.Source == "budget_cut" && v.Recurring && v.Status != SavingsStatus.Reversed).Sum(v => v.AnnualAmount);
         Line("Savings vs target", $"{SimulationEngine.Money(approved)} / {SimulationEngine.Money(PerformanceEngine.SavingsTarget)}", null, "Recurring savings approved toward the CFO's target.");
-        pulse.AddChild(Ui.Bar((double)approved, (double)PerformanceEngine.SavingsTarget, approved >= PerformanceEngine.SavingsTarget ? Palette.Success : Palette.Accent));
+        var savingsBar = Ui.Bar(0, (double)PerformanceEngine.SavingsTarget, approved >= PerformanceEngine.SavingsTarget ? Palette.Success : Palette.Accent);
+        var sa = Anim("savings", (double)approved, v => "");
+        savingsBar.Ready += () => Ui.GlideTo(savingsBar, sa.From, sa.To);
+        pulse.AddChild(savingsBar);
         var pulseCard = Ui.Card(pulse, null, null, 20);
         pulseCard.SizeFlagsHorizontal = SizeFlags.ExpandFill;
         pulseCard.CustomMinimumSize = new Vector2(340, 0);
@@ -143,14 +186,18 @@ public partial class DashboardView : StateView
         var t = s.Technology;
         var kpis = Ui.HBox(16);
         kpis.AddChild(Ui.Tile("Board confidence", $"{s.Metrics.BoardConfidence:0}", "Moves with reviews, incidents and escalations", Palette.ForScore(s.Metrics.BoardConfidence),
-            D(h => h.BoardConfidence, true), Series(h => h.BoardConfidence), "How much the board trusts the leadership team. Very low confidence can end your tenure."));
+            D(h => h.BoardConfidence, true), Series(h => h.BoardConfidence), "How much the board trusts the leadership team. Very low confidence can end your tenure.",
+            Anim("board", s.Metrics.BoardConfidence, v => $"{v:0}")));
         kpis.AddChild(Ui.Tile("Employee morale", $"{s.Metrics.EmployeeMorale:0}", $"Technology team {tech.Morale:0}", Palette.ForScore(s.Metrics.EmployeeMorale),
-            D(h => h.Morale, true), Series(h => h.Morale), "Cuts, overload and incidents lower it."));
+            D(h => h.Morale, true), Series(h => h.Morale), "Cuts, overload and incidents lower it.",
+            Anim("morale", s.Metrics.EmployeeMorale, v => $"{v:0}")));
         kpis.AddChild(Ui.Tile("Known risk", $"{risk}", $"{s.Risks.Count(r => r.Known && !r.Closed)} open risks in the register", risk > 60 ? Palette.Danger : risk > 40 ? Palette.Warning : Palette.Success,
-            D(h => h.AssessedRisk, false), Series(h => h.AssessedRisk), "Total score of known open risks. Some risks are only discovered by investigating."));
+            D(h => h.AssessedRisk, false), Series(h => h.AssessedRisk), "Total score of known open risks. Some risks are only discovered by investigating.",
+            Anim("risk", risk, v => $"{v:0}")));
         kpis.AddChild(Ui.Tile("EHR recovery time", $"{t.ReportedRtoHours:0} h", $"Documented · target {t.TargetRtoHours:0} h{(t.HasSecondarySite ? " · secondary site live" : "")}",
             t.ReportedRtoHours <= t.TargetRtoHours ? Palette.Success : Palette.Danger, null, null,
-            "How long recovering the EHR after a disaster would take, as currently documented. It may be wrong until someone tests it."));
+            "How long recovering the EHR after a disaster would take, as currently documented. It may be wrong until someone tests it.",
+            Anim("rto", t.ReportedRtoHours, v => $"{v:0} h")));
         Body.AddChild(kpis);
 
         // ── Row 3: ideas (wide) + upcoming timeline (narrow)
@@ -201,16 +248,36 @@ public partial class InboxView : StateView
     public InboxView() { }
     public InboxView(GameScreen g) : base(g) { }
 
-    public void Select(string? messageId) { if (messageId != null) _selected = messageId; }
+    public void Select(string? messageId) { if (messageId != null) { _selected = messageId; _filter = "All"; } }
+    private string _filter = "All";
+
+    private static bool Matches(InboxMessage m, string filter) => filter switch
+    {
+        "Unread" => !m.Read,
+        "Urgent" => m.Kind is MessageKind.Incident or MessageKind.Escalation,
+        "Reports" => m.Kind is MessageKind.Report or MessageKind.Review,
+        "Finance" => m.Kind == MessageKind.Finance,
+        _ => true,
+    };
 
     protected override void Build(GameState s)
     {
         var split = Ui.HBox(12);
         split.SizeFlagsVertical = SizeFlags.ExpandFill;
         // This view lives in a scroll area, so size it to the window explicitly.
-        if (IsInsideTree()) split.CustomMinimumSize = new Vector2(0, Math.Max(420, GetViewportRect().Size.Y - 190));
+        if (IsInsideTree()) split.CustomMinimumSize = new Vector2(0, Math.Max(400, GetViewportRect().Size.Y - 260)); // leaves room for heading, filters and action buttons
+        var filters = Ui.HBox(6);
+        foreach (var f in new[] { "All", "Unread", "Urgent", "Reports", "Finance" })
+        {
+            int n = s.Inbox.Count(m => Matches(m, f));
+            var fb = Ui.Button(f == "All" ? $"All {n}" : $"{f} {n}", () => { _filter = f; Game.RefreshAll(); });
+            fb.CustomMinimumSize = new Vector2(0, 32);
+            if (f == _filter) { fb.AddThemeStyleboxOverride("normal", GameTheme.Box(Palette.AccentSoft, Palette.Accent, 6, 12)); fb.AddThemeColorOverride("font_color", Palette.TextPrimary); }
+            filters.AddChild(fb);
+        }
+        Body.AddChild(filters);
         var list = new ItemList { CustomMinimumSize = new Vector2(460, 0), SizeFlagsVertical = SizeFlags.ExpandFill };
-        var msgs = s.Inbox.AsEnumerable().Reverse().ToList();
+        var msgs = s.Inbox.AsEnumerable().Reverse().Where(m => Matches(m, _filter)).ToList();
         foreach (var m in msgs)
         {
             int i = list.AddItem($"{(m.Read ? "  " : "● ")}{m.Date:MMM d}  {m.Subject}");
@@ -247,6 +314,7 @@ public partial class InboxView : StateView
         Body.AddChild(split);
         int sel = Math.Max(0, msgs.FindIndex(m => m.Id == _selected));
         if (msgs.Count > 0) { list.Select(sel); Show(sel); }
+        else { reader.Clear(); reader.AppendText($"[color={Palette.Hex(Palette.TextMuted)}]Nothing here under \"{_filter}\". Try another filter.[/color]"); }
     }
 }
 

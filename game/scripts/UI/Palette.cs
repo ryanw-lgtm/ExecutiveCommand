@@ -342,11 +342,14 @@ public static class Ui
     }
 
     /// <summary>KPI tile: caption, one big monospaced number, optional trend and sparkline, supporting line.</summary>
-    public static PanelContainer Tile(string caption, string value, string sub = "", Color? accent = null, Control? trend = null, double[]? spark = null, string? tooltip = null)
+    public static PanelContainer Tile(string caption, string value, string sub = "", Color? accent = null, Control? trend = null, double[]? spark = null, string? tooltip = null,
+                                      (double From, double To, Func<double, string> Format)? count = null)
     {
         var top = HBox(8, Caption(caption), Spacer());
         if (trend != null) top.AddChild(trend);
-        var valueRow = HBox(12, Num(value, 28, accent ?? Palette.TextPrimary), Spacer());
+        var number = Num(value, 28, accent ?? Palette.TextPrimary);
+        if (count is { } cnt) number.Ready += () => CountTo(number, cnt.From, cnt.To, cnt.Format);
+        var valueRow = HBox(12, number, Spacer());
         // A trend line needs at least three months of data to say anything.
         if (spark is { Length: >= 3 } && spark.Max() - spark.Min() > 1e-6) { var sl = new Sparkline { Values = spark, LineColor = Palette.TextSecondary, SizeFlagsVertical = Control.SizeFlags.ShrinkCenter }; valueRow.AddChild(sl); }
         var v = VBox(6, top, valueRow);
@@ -356,6 +359,23 @@ public static class Ui
         card.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
         if (tooltip != null) card.TooltipText = tooltip;
         return card;
+    }
+
+    /// <summary>Animate a number label from one value to another (data change). Snaps when motion is reduced.</summary>
+    public static void CountTo(Label label, double from, double to, Func<double, string> format, double duration = 0.5)
+    {
+        if (Motion.Reduced || Math.Abs(to - from) < 1e-9 || !label.IsInsideTree()) { label.Text = format(to); return; }
+        label.Text = format(from);
+        label.CreateTween().SetEase(Tween.EaseType.Out).SetTrans(Tween.TransitionType.Cubic)
+             .TweenMethod(Callable.From<double>(v => label.Text = format(v)), from, to, duration);
+    }
+
+    /// <summary>Glide a progress bar to a new value.</summary>
+    public static void GlideTo(ProgressBar bar, double from, double to, double duration = 0.4)
+    {
+        if (Motion.Reduced || !bar.IsInsideTree()) { bar.Value = to; return; }
+        bar.Value = from;
+        bar.CreateTween().SetEase(Tween.EaseType.Out).SetTrans(Tween.TransitionType.Cubic).TweenProperty(bar, "value", to, duration);
     }
 
     /// <summary>Empty state: what's missing + how to fill it.</summary>

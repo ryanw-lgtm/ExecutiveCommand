@@ -1,5 +1,15 @@
 # Development log
 
+## 2026-11-23 — Iteration 6: animation and quality of life
+- **Time passes visibly**: multi-day advances tick the date day by day with a gold progress strip (≤ ~0.7 s total; instant for keyboard shortcuts and with Reduce motion).
+- **Auto-pause** on incidents and escalations during week/month advances; **Next event** (F8) skips ahead until a report, escalation, incident or review arrives (max 60 days).
+- **"While you were away"** digest on the dashboard with Open buttons for each new message.
+- **Animated data**: dashboard numbers count from their previous value (count-up on first view), savings bar glides; **nav badges** for Inbox/Decisions pulse once when the count rises.
+- **Toasts** stack bottom-right, slide in, reflow as others leave, click to dismiss, max 4.
+- **Meeting room**: ↑/↓ input history, Esc clears or cancels a pending decision, Ctrl+Enter confirms; confirmation card fades in; last attendees remembered.
+- **Inbox filters** (All / Unread / Urgent / Reports / Finance with counts); **"Saved ✓"** after autosave; **F11** fullscreen; help lists all shortcuts.
+- Verified: 77/77 tests; smoke test ALL PASSED incl. animated advance + digest, next-event stop, toast stacking. Fixed during review: toast height mis-measured before layout; inbox buttons pushed off-screen by the filter row.
+
 ## 2026-11-22 — Iteration 5: built-in AI engine, live AI dialogue
 - **Model chosen and verified**: Qwen3-4B-Instruct-2507, Q4_K_M GGUF (unsloth, revision a06e946), **Apache-2.0** confirmed on the official model card and LICENSE file. 2.5 GB, ~4 GB RAM. SHA-256 pinned.
 - **Windows AI engine bundled**: `llama-server.exe` cross-compiled from source with MinGW (AVX2, static; depends only on Windows system DLLs) via `tools/build_windows_llama.sh`; shipped in `runtime/llama/` by `tools/package_windows.sh`.

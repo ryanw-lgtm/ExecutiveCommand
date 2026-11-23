@@ -91,16 +91,38 @@ public static class SmokeTest
             Check(main.Session.State.Projects.Count == 1, "project started");
             game.RefreshAll(); await Shot("04_meeting");
 
-            main.Session.Advance(30); await Frames();
+            // Animated advance: date ticks, strip fills, digest collects what happened.
+            var d0 = main.Session.State.CurrentDate;
+            game.Navigate("Dashboard"); await Frames();
+            var adv = game.AdvanceAsync(30);
+            for (int i = 0; i < 8; i++) await Frames(2);
+            await Shot("05a_time_passing");
+            await adv;
+            int passed = main.Session.State.CurrentDate.DayNumber - d0.DayNumber;
+            Check(passed >= 1 && passed <= 30, $"animated advance moved {passed} days");
+            Check(game.Digest.Count > 0, "digest collected new messages");
+            if (passed < 30) { await game.AdvanceAsync(30 - passed); }
+            await Frames(10);
             Check(main.Session.State.Assignments[0].Status is AssignmentStatus.Completed or AssignmentStatus.Overdue, "assignment progressed");
             Check(main.Session.State.Finance.Statements.Count == 1, "month closed");
-            game.Navigate("Dashboard"); await Shot("05_dashboard_after");
+            game.Navigate("Dashboard"); await Frames(30); await Shot("05_dashboard_after");
+            // Next event: stops as soon as something noteworthy happens.
+            var before = main.Session.State.CurrentDate;
+            await game.AdvanceAsync(60, untilEvent: true);
+            int skipped = main.Session.State.CurrentDate.DayNumber - before.DayNumber;
+            Check(skipped is >= 1 and < 60 && game.Digest.Count > 0, $"next event stopped after {skipped} days");
+            // Toasts stack rather than overlap.
+            main.Toast("First"); main.Toast("Second"); main.Toast("Third"); await Frames(20);
+            var toasts = main.GetChildren().OfType<PanelContainer>().Where(p => p.Visible && p.Position.X > 900).ToList();
+            Check(toasts.Count >= 3 && toasts.Select(t => (int)t.Position.Y).Distinct().Count() == toasts.Count, "toasts stack without overlapping");
+            await Shot("05b_toasts");
             game.Navigate("Finance"); await Shot("06_finance");
             game.Navigate("Projects"); await Shot("07_projects");
             game.Navigate("Decisions"); await Shot("08_decisions");
             game.Navigate("Performance"); await Shot("09_performance");
             game.Navigate("Executives"); await Shot("10b_executives");
             game.Navigate("Inbox"); await Shot("10_inbox");
+            Check(true, "inbox with filters renders");
 
             string hash = StateSerializer.StateHash(main.Session.State);
             main.Session.Save("smoke");

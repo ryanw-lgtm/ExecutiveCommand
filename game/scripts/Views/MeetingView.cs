@@ -37,6 +37,34 @@ public partial class MeetingView : VBoxContainer, IGameView
     private readonly StringBuilder _transcript = new();
     private AiPanel _aiBanner = null!;
     private readonly HashSet<MeetingReply> _shownLive = new(ReferenceEqualityComparer.Instance);
+    private readonly List<string> _history = new();
+    private int _historyIndex = -1;
+
+    /// <summary>Terminal-style conveniences in the input box.</summary>
+    private void OnInputKey(InputEvent e)
+    {
+        if (e is not InputEventKey { Pressed: true } k) return;
+        if (k.Keycode == Key.Up && _history.Count > 0)
+        {
+            _historyIndex = _historyIndex < 0 ? _history.Count - 1 : Math.Max(0, _historyIndex - 1);
+            _input.Text = _history[_historyIndex]; _input.CaretColumn = _input.Text.Length; _input.AcceptEvent();
+        }
+        else if (k.Keycode == Key.Down && _historyIndex >= 0)
+        {
+            _historyIndex++;
+            _input.Text = _historyIndex < _history.Count ? _history[_historyIndex] : "";
+            if (_historyIndex >= _history.Count) _historyIndex = -1;
+            _input.CaretColumn = _input.Text.Length; _input.AcceptEvent();
+        }
+        else if (k.Keycode is Key.Enter or Key.KpEnter && k.CtrlPressed && HasPendingConfirmation) { _ = Confirm(true); _input.AcceptEvent(); }
+        else if (k.Keycode == Key.Escape)
+        {
+            if (_input.Text.Length > 0) _input.Text = "";
+            else if (HasPendingConfirmation) _ = Confirm(false);
+            _historyIndex = -1;
+            _input.AcceptEvent();
+        }
+    }
 
     public bool HasPendingConfirmation => _meeting?.HasPendingConfirmation == true;
 
@@ -72,7 +100,7 @@ public partial class MeetingView : VBoxContainer, IGameView
         var pick = Ui.HBox(6, Ui.Caption("Or choose"));
         foreach (var r in Roles.Addressable)
         {
-            var cb = new CheckBox { Text = r == ExecRole.EADirector ? "EA Director" : r == ExecRole.Vendor ? "Vendor" : r.ToString(), ButtonPressed = r is ExecRole.CIO or ExecRole.CISO or ExecRole.EADirector };
+            var cb = new CheckBox { Text = r == ExecRole.EADirector ? "EA Director" : r == ExecRole.Vendor ? "Vendor" : r.ToString(), ButtonPressed = game.Session.Settings.LastAttendees.Contains(r.ToString()) };
             _attendees[r] = cb;
             pick.AddChild(cb);
         }
@@ -96,7 +124,8 @@ public partial class MeetingView : VBoxContainer, IGameView
         // Confirmation for high-impact decisions.
         _confirmText = Ui.Label("", Fonts.Base, Palette.TextPrimary, wrap: true);
         var confirmRow = Ui.HBox(12, Ui.Icon("warning-circle", 22, Palette.Warning), _confirmText,
-            Ui.Button("Cancel", () => _ = Confirm(false)), Ui.Button("Confirm decision", () => _ = Confirm(true), primary: true, icon: "check-circle"));
+            Ui.Label("Esc", Fonts.Xs, Palette.TextMuted, font: Fonts.Mono), Ui.Button("Cancel", () => _ = Confirm(false)),
+            Ui.Label("Ctrl+Enter", Fonts.Xs, Palette.TextMuted, font: Fonts.Mono), Ui.Button("Confirm decision", () => _ = Confirm(true), primary: true, icon: "check-circle"));
         _confirmCard = Ui.AccentCard(confirmRow, Palette.Warning);
         _confirmCard.Visible = false;
         AddChild(_confirmCard);
@@ -111,6 +140,8 @@ public partial class MeetingView : VBoxContainer, IGameView
         _input = new LineEdit { PlaceholderText = "Type what you want to say and press Enter — or pick an idea above", SizeFlagsHorizontal = SizeFlags.ExpandFill, MaxLength = 1000, CustomMinimumSize = new Vector2(0, 48) };
         _input.AddThemeFontSizeOverride("font_size", Fonts.Base);
         _input.TextSubmitted += _text => _ = Send();
+        _input.GuiInput += OnInputKey;
+        _input.TooltipText = "Enter to send · ↑/↓ previous lines · Esc to clear · Ctrl+Enter to confirm a pending decision";
         _send = Ui.Button("Say", () => _ = Send(), primary: true, icon: "arrow-right");
         _send.CustomMinimumSize = new Vector2(96, 48);
         _skip = Ui.Button("Skip", () => _skipRequested = true);
@@ -176,6 +207,8 @@ public partial class MeetingView : VBoxContainer, IGameView
         var roles = _attendees.Where(kv => kv.Value.ButtonPressed).Select(kv => kv.Key).ToList();
         if (roles.Count == 0) { _game.Toast("Choose at least one attendee.", Palette.Warning); return; }
         _meeting = new MeetingService(_game.Session.Engine!, roles, _game.Session.Llm);
+        _game.Session.Settings.LastAttendees = roles.Select(r => r.ToString()).ToList();
+        try { _game.Session.SaveSettings(); } catch (Exception e) { GD.PushWarning(e.Message); }
         // Live AI: show "typing…" while the model is really writing, and each reply the moment it's ready.
         _meeting.Composing = x => ShowTyping(x.Name.StartsWith("Dr. ") ? "Dr. " + x.Name.Split(' ')[^1] : x.Name.Split(' ')[0], x.Role, x.Name);
         _meeting.ReplyReady = r => { if (!r.AiGenerated) return; HideTyping(); AppendReply(r); _shownLive.Add(r); };
@@ -314,6 +347,8 @@ public partial class MeetingView : VBoxContainer, IGameView
         if (text.Length == 0 || _meeting == null) return;
         if (_game.Session.State.Outcome != GameOutcome.InProgress) { _game.Toast("Your tenure has ended.", Palette.Warning); return; }
         _input.Text = "";
+        if (_history.Count == 0 || _history[^1] != text) _history.Add(text);
+        _historyIndex = -1;
         AppendPlayer(text);
         await Run(ct => _meeting.SayAsync(text, ExecRole.None, ct));
     }
@@ -343,8 +378,10 @@ public partial class MeetingView : VBoxContainer, IGameView
         {
             HideTyping();
             SetBusy(false);
+            bool wasVisible = _confirmCard.Visible;
             _confirmCard.Visible = _meeting?.HasPendingConfirmation == true;
             _confirmText.Text = _meeting?.PendingConfirmationPrompt ?? "";
+            if (_confirmCard.Visible && !wasVisible) Motion.FadeIn(_confirmCard, 0.2, 0);
             _game.Session.NotifyChanged();
             _input.GrabFocus();
         }

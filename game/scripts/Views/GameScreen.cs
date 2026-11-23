@@ -20,6 +20,15 @@ public partial class GameScreen : Control
     private MarginContainer _content = null!;
     private Label _date = null!, _company = null!, _ai = null!;
     private string _current = "Dashboard";
+    private readonly List<Button> _timeButtons = new();
+    private readonly Dictionary<string, PanelContainer> _badges = new();
+    private readonly Dictionary<string, int> _badgeCounts = new();
+    private ProgressBar _timeStrip = null!;
+    private Label _saved = null!;
+    private bool _advancing;
+    /// <summary>Messages that arrived during the last time advance, shown on the dashboard.</summary>
+    public List<InboxMessage> Digest { get; } = new();
+    public string? DigestNote { get; private set; }
 
     public GameSession Session => _main.Session;
     public MeetingView Meeting => (MeetingView)_views["Meeting Room"];
@@ -53,15 +62,25 @@ public partial class GameScreen : Control
         _date = Ui.Label("", Fonts.Base, Palette.TextPrimary, font: Fonts.MonoMedium);
         var dateBox = Ui.HBox(8, Ui.Icon("calendar-plus", 18, Palette.Accent), _date);
         bar.AddChild(dateBox);
-        AddTip(bar, Ui.Button("Day", () => Advance(1), icon: "play"), "Advance one day (F5). Your executives keep working while time passes.");
-        AddTip(bar, Ui.Button("Week", () => Advance(7), icon: "fast-forward"), "Advance one week (F6).");
-        AddTip(bar, Ui.Button("Month", () => Advance(30), icon: "fast-forward"), "Advance 30 days (F7). Month-end brings the financial close.");
+        _timeButtons.Add(AddTip(bar, Ui.Button("Day", () => _ = AdvanceAsync(1), icon: "play"), "Advance one day (F5). Your executives keep working while time passes."));
+        _timeButtons.Add(AddTip(bar, Ui.Button("Week", () => _ = AdvanceAsync(7), icon: "fast-forward"), "Advance one week (F6). Stops early if something urgent happens."));
+        _timeButtons.Add(AddTip(bar, Ui.Button("Month", () => _ = AdvanceAsync(30), icon: "fast-forward"), "Advance 30 days (F7). Stops early if something urgent happens."));
+        _timeButtons.Add(AddTip(bar, Ui.Button("Next event", () => _ = AdvanceAsync(60, untilEvent: true), icon: "lightning"), "Skip ahead until something happens — a report, escalation, incident or review (F8)."));
+        _saved = Ui.Label("Saved ✓", Fonts.Xs, Palette.Success);
+        _saved.Modulate = new Color(1, 1, 1, 0);
+        bar.AddChild(_saved);
         bar.AddChild(Ui.Gap(8));
         AddTip(bar, IconButton("magnifying-glass", OpenPalette), "Command palette — jump anywhere or do anything (Ctrl+K)");
         AddTip(bar, IconButton("floppy-disk", () => main.ShowSaveLoad(true)), "Save or load (the game also autosaves when you advance time)");
         AddTip(bar, IconButton("question", () => ShowHelp()), "How to play (F1)");
         AddTip(bar, IconButton("gear-six", () => main.ShowSettings(true)), "Settings: interface size, motion, local AI");
         AddTip(bar, IconButton("list", () => { Session.Save(); main.ShowMainMenu(); }), "Save and return to the main menu");
+
+        // Slim progress strip that fills while time passes.
+        _timeStrip = new ProgressBar { MaxValue = 1, ShowPercentage = false, CustomMinimumSize = new Vector2(0, 3), Modulate = new Color(1, 1, 1, 0) };
+        _timeStrip.AddThemeStyleboxOverride("background", GameTheme.Box(Palette.BgSunken, null, 0, 0));
+        _timeStrip.AddThemeStyleboxOverride("fill", GameTheme.Box(Palette.Accent, null, 0, 0));
+        root.AddChild(_timeStrip);
 
         // ---- Body: nav + content
         var body = Ui.HBox(0);
@@ -95,6 +114,16 @@ public partial class GameScreen : Control
             b.TooltipText = (NavHelp.TryGetValue(title, out var h) ? h : title) + $"  (Ctrl+{n++})";
             _nav[title] = b;
             nav.AddChild(b);
+            if (title is "Inbox" or "Decisions")
+            {
+                var badge = Ui.Pill("0", Palette.Accent);
+                badge.SetAnchorsPreset(LayoutPreset.CenterRight);
+                badge.Position = new Vector2(0, 0);
+                badge.Visible = false;
+                b.AddChild(badge);
+                b.Resized += () => badge.Position = new Vector2(b.Size.X - badge.Size.X - 10, (b.Size.Y - badge.Size.Y) / 2);
+                _badges[title] = badge;
+            }
         }
         nav.AddChild(Ui.Spacer(false));
         nav.AddChild(Ui.Label(Session.State.Company.FictionNotice, 11, Palette.TextMuted, wrap: true));
@@ -145,9 +174,11 @@ public partial class GameScreen : Control
         _palette?.QueueFree();
         var cmds = new List<(string Label, string Group, Action Run)>();
         foreach (var k in _views.Keys) cmds.Add(($"Go to {k}", "Navigate", () => Navigate(k)));
-        cmds.Add(("Advance one day", "Time", () => Advance(1)));
-        cmds.Add(("Advance one week", "Time", () => Advance(7)));
-        cmds.Add(("Advance one month", "Time", () => Advance(30)));
+        cmds.Add(("Advance one day", "Time", () => _ = AdvanceAsync(1, animate: false)));
+        cmds.Add(("Advance one week", "Time", () => _ = AdvanceAsync(7, animate: false)));
+        cmds.Add(("Advance one month", "Time", () => _ = AdvanceAsync(30, animate: false)));
+        cmds.Add(("Skip to next event", "Time", () => _ = AdvanceAsync(60, untilEvent: true, animate: false)));
+        cmds.Add(("Toggle fullscreen", "Display", () => _main.ToggleFullscreen()));
         cmds.Add(("Save game", "Game", () => _main.ShowSaveLoad(true)));
         cmds.Add(("How to play", "Game", () => ShowHelp()));
         cmds.Add(("Settings", "Game", () => _main.ShowSettings(true)));
@@ -199,7 +230,7 @@ public partial class GameScreen : Control
         ["Performance"] = "How you are being judged, and every decision on record",
     };
 
-    private static void AddTip(Container parent, Control c, string tip) { c.TooltipText = tip; parent.AddChild(c); }
+    private static T AddTip<T>(Container parent, T c, string tip) where T : Control { c.TooltipText = tip; parent.AddChild(c); return c; }
 
     /// <summary>Jump to the meeting room with chosen attendees and an optional sentence ready to send.</summary>
     public void OpenMeeting(IEnumerable<ExecRole> roles, string? prefill)
@@ -219,9 +250,10 @@ public partial class GameScreen : Control
     {
         if (e is not InputEventKey { Pressed: true, Echo: false } k) return;
         if (k.Keycode == Key.F1) ShowHelp();
-        else if (k.Keycode == Key.F5) Advance(1);
-        else if (k.Keycode == Key.F6) Advance(7);
-        else if (k.Keycode == Key.F7) Advance(30);
+        else if (k.Keycode == Key.F5) _ = AdvanceAsync(1, animate: false);
+        else if (k.Keycode == Key.F6) _ = AdvanceAsync(7, animate: false);
+        else if (k.Keycode == Key.F7) _ = AdvanceAsync(30, animate: false);
+        else if (k.Keycode == Key.F8) _ = AdvanceAsync(60, untilEvent: true, animate: false);
         else if (k.CtrlPressed && k.Keycode >= Key.Key1 && k.Keycode <= Key.Key9)
         {
             int i = (int)(k.Keycode - Key.Key1);
@@ -250,7 +282,8 @@ public partial class GameScreen : Control
             "[b]3. Decide.[/b] Approve, defer or reject proposals in [b]Decisions[/b]. Each executive shows whether they support it and why. Big spending goes to the CFO and CEO.\n\n" +
             "[b]4. Let time pass.[/b] Press [b]Next day / week / month[/b]. Work gets done, reports arrive, money moves, and sometimes things go wrong.\n\n" +
             "[color=#8a97ad]Your executives judge you by results and evidence — not by what you claim. Decisions backed by analysis and the right people score better.\n" +
-            "Shortcuts: F1 help · F5/F6/F7 advance a day/week/month · Ctrl+1–9 switch screens.[/color]");
+            "Shortcuts: F1 help · F5/F6/F7 advance a day/week/month · F8 next event · Ctrl+K command palette · Ctrl+1–9 screens · F11 fullscreen.\n" +
+            "In meetings: ↑/↓ previous lines · Esc clear or cancel · Ctrl+Enter confirm a decision.[/color]");
         var dlg = new AcceptDialog { Title = welcome ? "Your first day" : "How to play", OkButtonText = welcome ? "Let's begin" : "Got it" };
         dlg.AddChild(text);
         AddChild(dlg);
@@ -317,22 +350,88 @@ public partial class GameScreen : Control
         _company.Text = $"{s.Player.Name}, {s.Player.Title} · {s.Company.Name} · {s.Difficulty}";
         _company.TooltipText = _company.Text;
         _date.Text = s.CurrentDate.ToString("ddd MMM d, yyyy");
-        int unread = s.Inbox.Count(m => !m.Read);
-        _nav["Inbox"].Text = unread > 0 ? $"Inbox  ({unread})" : "Inbox";
-        int pending = s.Proposals.Count(p => p.Status == ProposalStatus.Pending) + s.Incidents.Count(i => i.Status == IncidentStatus.Active && i.ResponseOptions.Count > 0);
-        _nav["Decisions"].Text = pending > 0 ? $"Decisions  ({pending})" : "Decisions";
+        SetBadge("Inbox", s.Inbox.Count(m => !m.Read));
+        SetBadge("Decisions", s.Proposals.Count(p => p.Status == ProposalStatus.Pending) + s.Incidents.Count(i => i.Status == IncidentStatus.Active && i.ResponseOptions.Count > 0));
         ((IGameView)_views[_current]).Refresh(Session);
     }
 
-    private void Advance(int days)
+    private void SetBadge(string nav, int count)
     {
-        if (Session.State.Outcome != GameOutcome.InProgress) { _main.Toast("Your tenure has ended. Start a new career from the menu.", Palette.Warn); return; }
-        if (Meeting.HasPendingConfirmation) { _main.Toast("Confirm or cancel the pending decision in the meeting first.", Palette.Warn); return; }
-        var msgs = Session.Advance(days);
-        var urgent = msgs.FirstOrDefault(m => m.Kind is MessageKind.Incident or MessageKind.Escalation or MessageKind.Review);
-        _main.Toast(urgent != null ? $"{urgent.Subject}" : $"{msgs.Count} new message(s).", urgent?.Kind == MessageKind.Incident ? Palette.Bad : urgent != null ? Palette.Warn : Palette.Accent);
-        if (msgs.Any(m => m.Kind == MessageKind.Incident)) Navigate("Inbox");
+        if (!_badges.TryGetValue(nav, out var badge)) return;
+        int before = _badgeCounts.GetValueOrDefault(nav);
+        _badgeCounts[nav] = count;
+        badge.Visible = count > 0;
+        ((Label)badge.GetChild(0)).Text = count > 99 ? "99+" : count.ToString();
+        var b = _nav[nav];
+        badge.Position = new Vector2(b.Size.X - badge.GetCombinedMinimumSize().X - 10, (b.Size.Y - badge.GetCombinedMinimumSize().Y) / 2);
+        if (count > before && before >= 0 && !Motion.Reduced && IsInsideTree())
+        {
+            // One gentle pulse when something new arrives.
+            badge.PivotOffset = badge.GetCombinedMinimumSize() / 2;
+            var t = badge.CreateTween().SetEase(Tween.EaseType.Out).SetTrans(Tween.TransitionType.Back);
+            t.TweenProperty(badge, "scale", new Vector2(1.25f, 1.25f), 0.12);
+            t.TweenProperty(badge, "scale", Vector2.One, 0.18);
+        }
     }
+
+    private static bool IsUrgent(InboxMessage m) => m.Kind is MessageKind.Incident or MessageKind.Escalation;
+    private static bool IsEvent(InboxMessage m) => m.Kind is MessageKind.Incident or MessageKind.Escalation or MessageKind.Review or MessageKind.Report;
+
+    /// <summary>
+    /// Advance time day by day. The date visibly ticks (mouse-initiated only), and the advance pauses as
+    /// soon as something urgent happens — or, for "Next event", as soon as anything noteworthy arrives.
+    /// </summary>
+    public async Task AdvanceAsync(int maxDays, bool untilEvent = false, bool animate = true)
+    {
+        if (_advancing) return;
+        if (Session.State.Outcome != GameOutcome.InProgress) { _main.Toast("Your tenure has ended. Start a new career from the menu.", Palette.Warning); return; }
+        if (Meeting.HasPendingConfirmation) { _main.Toast("Confirm or cancel the pending decision in the meeting first.", Palette.Warning); return; }
+        _advancing = true;
+        foreach (var b in _timeButtons) b.Disabled = true;
+        animate &= !Motion.Reduced && maxDays > 1;
+        if (animate) { _timeStrip.Value = 0; _timeStrip.Modulate = Colors.White; }
+        var got = new List<InboxMessage>();
+        string? stopReason = null;
+        int days = 0;
+        double perDay = Math.Clamp(0.7 / maxDays, 0.012, 0.06);
+        try
+        {
+            while (days < maxDays && Session.State.Outcome == GameOutcome.InProgress)
+            {
+                var msgs = Session.StepDay();
+                days++;
+                got.AddRange(msgs);
+                _date.Text = Session.State.CurrentDate.ToString("ddd MMM d, yyyy");
+                if (animate)
+                {
+                    _timeStrip.Value = days / (double)maxDays;
+                    await ToSignal(GetTree().CreateTimer(perDay), SceneTreeTimer.SignalName.Timeout);
+                }
+                var urgent = msgs.FirstOrDefault(IsUrgent);
+                if (urgent != null && days < maxDays) { stopReason = $"Paused: {urgent.Subject}"; break; }
+                if (untilEvent && msgs.FirstOrDefault(IsEvent) is { } ev) { stopReason = $"{ev.Subject}"; break; }
+            }
+        }
+        finally
+        {
+            bool saved = Session.FinishAdvance();
+            _advancing = false;
+            foreach (var b in _timeButtons) b.Disabled = false;
+            if (animate) _timeStrip.CreateTween().TweenProperty(_timeStrip, "modulate:a", 0.0, 0.25);
+            if (saved && !Motion.Reduced) { var t = _saved.CreateTween(); t.TweenProperty(_saved, "modulate:a", 1.0, 0.15); t.TweenInterval(1.2); t.TweenProperty(_saved, "modulate:a", 0.0, 0.3); }
+        }
+
+        Digest.Clear();
+        Digest.AddRange(got);
+        DigestNote = $"{days} day{(days == 1 ? "" : "s")} passed" + (stopReason != null && untilEvent == false ? " — paused early" : "");
+        var urgentMsg = got.FirstOrDefault(IsUrgent);
+        string text = stopReason ?? (got.Count == 0 ? $"{days} day{(days == 1 ? "" : "s")} passed. Nothing new." : $"{days} day{(days == 1 ? "" : "s")} passed · {got.Count} new message{(got.Count == 1 ? "" : "s")}");
+        _main.Toast(text, got.Any(m => m.Kind == MessageKind.Incident) ? Palette.Danger : urgentMsg != null ? Palette.Warning : Palette.Accent);
+        if (got.Any(m => m.Kind == MessageKind.Incident)) OpenInbox(got.First(m => m.Kind == MessageKind.Incident).Id);
+        else if (got.Count > 0 && _current == "Dashboard") RefreshAll();
+    }
+
+    public void DismissDigest() { Digest.Clear(); RefreshAll(); }
 
     public void Toast(string text, Color? c = null) => _main.Toast(text, c);
 }

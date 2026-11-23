@@ -49,22 +49,81 @@ public partial class Main : Control
     public void ShowSettings(bool fromGame) => Show(new SettingsScreen(this, fromGame));
     public void ShowSaveLoad(bool fromGame) => Show(new SaveLoadScreen(this, fromGame));
 
+    private readonly List<Control> _toasts = new();
+    private const float ToastWidth = 440, ToastGap = 10, ToastMargin = 24;
+
+    /// <summary>Toasts stack in the bottom-right, slide in, and reflow as older ones leave (max 4 visible).</summary>
     public void Toast(string text, Color? color = null)
     {
-        // Toast: bottom-right, colored edge + text (never color alone), ~3s, exit faster than entrance.
         var c = color ?? Palette.Accent;
-        var l = Ui.Label(text, Fonts.Sm + 1, Palette.TextPrimary, wrap: true);
-        var card = Ui.AccentCard(l, c);
+        var label = Ui.Label(text, Fonts.Sm + 1, Palette.TextPrimary, wrap: true);
+        label.CustomMinimumSize = new Vector2(ToastWidth - 64, 0); // wrap at the toast's real width so its height is right
+        var card = Ui.AccentCard(label, c);
         card.AddThemeStyleboxOverride("panel", GameTheme.Box(Palette.BgElevated, Palette.BorderStrong, 8, 14));
-        card.CustomMinimumSize = new Vector2(440, 0);
-        card.Size = new Vector2(440, 0);
+        card.CustomMinimumSize = new Vector2(ToastWidth, 0);
+        card.Size = new Vector2(ToastWidth, 0);
+        card.MouseFilter = MouseFilterEnum.Stop;
+        card.GuiInput += e => { if (e is InputEventMouseButton { Pressed: true }) DismissToast(card); }; // click to dismiss
         AddChild(card);
-        card.Position = new Vector2(GetViewportRect().Size.X - 440 - 24, GetViewportRect().Size.Y - 96);
-        Motion.FadeIn(card, 0.2, 8);
-        var tween = CreateTween();
-        tween.TweenInterval(3.0);
-        tween.TweenProperty(card, "modulate:a", 0.0, Motion.Exit);
-        tween.TweenCallback(Callable.From(card.QueueFree));
+        _toasts.Add(card);
+        while (_toasts.Count > 4) DismissToast(_toasts[0]);
+        LayoutToasts(card);
+        var life = CreateTween();
+        life.TweenInterval(4.0);
+        life.TweenCallback(Callable.From(() => DismissToast(card)));
+    }
+
+    private void LayoutToasts(Control? entering = null)
+    {
+        var vp = GetViewportRect().Size;
+        float y = vp.Y - ToastMargin;
+        for (int i = _toasts.Count - 1; i >= 0; i--)
+        {
+            var t = _toasts[i];
+            float h = t.GetCombinedMinimumSize().Y;
+            y -= h;
+            var target = new Vector2(vp.X - ToastWidth - ToastMargin, y);
+            if (t == entering)
+            {
+                t.Position = target + new Vector2(Motion.Reduced ? 0 : 24, 0);
+                t.Modulate = new Color(1, 1, 1, Motion.Reduced ? 1 : 0);
+                if (!Motion.Reduced)
+                {
+                    var tw = t.CreateTween().SetParallel().SetEase(Tween.EaseType.Out).SetTrans(Tween.TransitionType.Cubic);
+                    tw.TweenProperty(t, "position", target, 0.22);
+                    tw.TweenProperty(t, "modulate:a", 1.0, 0.18);
+                }
+            }
+            else if (Motion.Reduced) t.Position = target;
+            else t.CreateTween().SetEase(Tween.EaseType.Out).SetTrans(Tween.TransitionType.Cubic).TweenProperty(t, "position", target, 0.18);
+            y -= ToastGap;
+        }
+    }
+
+    private void DismissToast(Control card)
+    {
+        if (!_toasts.Remove(card) || !IsInstanceValid(card)) return;
+        if (Motion.Reduced) card.QueueFree();
+        else
+        {
+            var t = card.CreateTween().SetParallel().SetEase(Tween.EaseType.In).SetTrans(Tween.TransitionType.Cubic);
+            t.TweenProperty(card, "modulate:a", 0.0, Motion.Exit);
+            t.TweenProperty(card, "position:x", card.Position.X + 16, Motion.Exit);
+            t.Chain().TweenCallback(Callable.From(card.QueueFree));
+        }
+        LayoutToasts();
+    }
+
+    public void ToggleFullscreen()
+    {
+        Session.Settings.Fullscreen = !Session.Settings.Fullscreen;
+        try { Session.SaveSettings(); } catch (Exception e) { GD.PushWarning(e.Message); }
+        ApplyDisplaySettings();
+    }
+
+    public override void _UnhandledInput(InputEvent e)
+    {
+        if (e is InputEventKey { Pressed: true, Echo: false, Keycode: Key.F11 }) { ToggleFullscreen(); GetViewport().SetInputAsHandled(); }
     }
 
     public override void _Notification(int what)

@@ -23,6 +23,8 @@ public sealed class PlayerSettings
     public bool ReduceMotion { get; set; }
     /// <summary>0 = off, 1 = fast, 2 = natural (see Core.AI.ReplyPacing).</summary>
     public int ReplyPacing { get; set; } = 2;
+    /// <summary>Attendees of the last meeting, restored next time.</summary>
+    public List<string> LastAttendees { get; set; } = new() { "CIO", "CISO", "EADirector" };
 }
 
 /// <summary>
@@ -82,6 +84,18 @@ public sealed class GameSession : IDisposable
         if (Settings.Autosave) Saves.Save("autosave", State);
         StateChanged?.Invoke();
         return msgs;
+    }
+
+    /// <summary>Advance one day without saving or notifying (the UI animates multi-day advances).</summary>
+    public List<InboxMessage> StepDay() => Engine!.AdvanceDays(1);
+
+    /// <summary>Finish a multi-day advance: autosave once and refresh the UI. Returns true if it saved.</summary>
+    public bool FinishAdvance()
+    {
+        bool saved = false;
+        if (Settings.Autosave) { Saves.Save("autosave", State); saved = true; }
+        StateChanged?.Invoke();
+        return saved;
     }
 
     public void NotifyChanged() => StateChanged?.Invoke();
