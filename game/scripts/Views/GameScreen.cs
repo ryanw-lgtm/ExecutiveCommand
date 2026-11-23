@@ -24,7 +24,9 @@ public partial class GameScreen : Control
     private readonly Dictionary<string, PanelContainer> _badges = new();
     private readonly Dictionary<string, int> _badgeCounts = new();
     private ProgressBar _timeStrip = null!;
-    private Label _saved = null!;
+    private Label _saved = null!, _rank = null!, _stars = null!;
+    private ProgressBar _xpBar = null!;
+    private int _shownXp = -1;
     private bool _advancing;
     /// <summary>Messages that arrived during the last time advance, shown on the dashboard.</summary>
     public List<InboxMessage> Digest { get; } = new();
@@ -58,6 +60,17 @@ public partial class GameScreen : Control
         bar.AddChild(who);
         _ai = Ui.Label("", Fonts.Xs, Palette.TextMuted);
         bar.AddChild(_ai);
+        _rank = Ui.Label("", Fonts.Xs, Palette.Accent, font: Fonts.Caption);
+        _xpBar = Ui.Bar(0, 1, Palette.Accent);
+        _xpBar.CustomMinimumSize = new Vector2(110, 6);
+        _stars = Ui.Num("", Fonts.Sm, Palette.Accent);
+        var career = Ui.HBox(10, Ui.VBox(3, _rank, _xpBar), _stars);
+        career.MouseFilter = MouseFilterEnum.Ignore;
+        var careerBtn = new Button { Flat = true, FocusMode = FocusModeEnum.None, MouseDefaultCursorShape = CursorShape.PointingHand, TooltipText = "Goals & career" };
+        careerBtn.AddChild(career);
+        careerBtn.Pressed += () => Navigate("Goals");
+        career.Resized += () => careerBtn.CustomMinimumSize = career.Size;
+        bar.AddChild(careerBtn);
         bar.AddChild(Ui.Gap(8));
         _date = Ui.Label("", Fonts.Base, Palette.TextPrimary, font: Fonts.MonoMedium);
         var dateBox = Ui.HBox(8, Ui.Icon("calendar-plus", 18, Palette.Accent), _date);
@@ -92,6 +105,7 @@ public partial class GameScreen : Control
         navCard.CustomMinimumSize = new Vector2(232, 0);
         body.AddChild(navCard);
 
+        Register("Office", new OfficeView(this));
         Register("Dashboard", new DashboardView(this));
         Register("Inbox", new InboxView(this));
         Register("Meeting Room", new MeetingView(this));
@@ -101,6 +115,7 @@ public partial class GameScreen : Control
         Register("Risk Register", new RiskView(this));
         Register("Executives", new PeopleView(this));
         Register("Performance", new PerformanceView(this));
+        Register("Goals", new GoalsView(this));
         nav.AddChild(Ui.Gap(4));
         int n = 1;
         foreach (var (title, _) in _views)
@@ -138,15 +153,15 @@ public partial class GameScreen : Control
         Session.AiStatusChanged += OnAiStatus;
         TreeExiting += () => { Session.StateChanged -= OnStateChanged; Session.AiStatusChanged -= OnAiStatus; };
         OnAiStatus(Session.Llm?.Status ?? Core.AI.Llm.LlmStatus.Stopped);
-        Navigate("Dashboard");
+        Navigate("Office");
     }
 
     private void Register(string navKey, Control view) => _views[navKey] = view;
 
     private static readonly Dictionary<string, string> NavIcon = new()
     {
-        ["Dashboard"] = "squares-four", ["Inbox"] = "tray", ["Meeting Room"] = "chats-circle", ["Decisions"] = "scales", ["Projects"] = "kanban",
-        ["Finance"] = "chart-line-up", ["Risk Register"] = "shield-warning", ["Executives"] = "users-three", ["Performance"] = "medal",
+        ["Office"] = "lightning", ["Goals"] = "medal", ["Dashboard"] = "squares-four", ["Inbox"] = "tray", ["Meeting Room"] = "chats-circle", ["Decisions"] = "scales", ["Projects"] = "kanban",
+        ["Finance"] = "chart-line-up", ["Risk Register"] = "shield-warning", ["Executives"] = "users-three", ["Performance"] = "chart-line-up",
     };
 
     private static StyleBoxFlat NoRadius(StyleBoxFlat sb) { sb.SetCornerRadiusAll(0); sb.BorderWidthTop = sb.BorderWidthLeft = 0; return sb; }
@@ -219,6 +234,8 @@ public partial class GameScreen : Control
 
     private static readonly Dictionary<string, string> NavHelp = new()
     {
+        ["Office"] = "Your office — click objects to get around",
+        ["Goals"] = "Objectives, stars, rank, achievements and report cards",
         ["Dashboard"] = "Your organization at a glance, and what needs your attention",
         ["Inbox"] = "Reports, escalations and notices from your executives",
         ["Meeting Room"] = "Talk to executives in your own words: ask, assign, decide",
@@ -350,9 +367,66 @@ public partial class GameScreen : Control
         _company.Text = $"{s.Player.Name}, {s.Player.Title} · {s.Company.Name} · {s.Difficulty}";
         _company.TooltipText = _company.Text;
         _date.Text = s.CurrentDate.ToString("ddd MMM d, yyyy");
+        var (into, needed) = ProgressionEngine.LevelProgress(s.Career.Xp);
+        _rank.Text = $"{ProgressionEngine.RankTitle(s.Career.Xp).ToUpperInvariant()} · LV {ProgressionEngine.Level(s.Career.Xp)}";
+        _xpBar.MaxValue = needed;
+        if (_shownXp >= 0 && s.Career.Xp > _shownXp && ProgressionEngine.Level(_shownXp) == ProgressionEngine.Level(s.Career.Xp)) Ui.GlideTo(_xpBar, _xpBar.Value, into, 0.6);
+        else _xpBar.Value = into;
+        _shownXp = s.Career.Xp;
+        _stars.Text = $"★ {s.Career.Stars}";
         SetBadge("Inbox", s.Inbox.Count(m => !m.Read));
         SetBadge("Decisions", s.Proposals.Count(p => p.Status == ProposalStatus.Pending) + s.Incidents.Count(i => i.Status == IncidentStatus.Active && i.ResponseOptions.Count > 0));
         ((IGameView)_views[_current]).Refresh(Session);
+        if (!_advancing) Callable.From(ShowCelebrations).CallDeferred();
+    }
+
+    /// <summary>Shows queued moments (achievements, objectives, rank-ups, report cards) one after another.</summary>
+    private void ShowCelebrations()
+    {
+        if (!Session.HasGame || !IsInsideTree()) return;
+        var s = Session.State;
+        var queue = s.Career.PendingCelebrations.ToList();
+        if (queue.Count == 0) return;
+        s.Career.PendingCelebrations.Clear();
+        // The report card is the big moment: show it first. Several rank-ups at once collapse into one.
+        int topRank = queue.Where(q => q.StartsWith("rank:")).Select(q => int.Parse(q[5..])).DefaultIfEmpty(0).Max();
+        queue = queue.Where(q => !q.StartsWith("rank:")).OrderBy(q => q.StartsWith("report:") ? 0 : q.StartsWith("failed:") ? 1 : 2).ToList();
+        if (topRank > 0) queue.Add($"rank:{topRank}");
+        var report = queue.FirstOrDefault(q => q.StartsWith("report:"));
+        if (report != null && s.Career.ReportCards.FirstOrDefault(r => r.Id == report[7..]) is { } card)
+        {
+            var rest = queue.Where(q => q != report).ToList();
+            card.Seen = true;
+            Celebrations.ReportCard(_main, card, s, onClose: () => { s.Career.PendingCelebrations.InsertRange(0, rest); ShowCelebrations(); });
+            return;
+        }
+        double delay = 0;
+        foreach (var item in queue)
+        {
+            var parts = item.Split(':', 2);
+            Action? show = parts[0] switch
+            {
+                "achievement" when s.Career.Achievements.FirstOrDefault(a => a.Id == parts[1]) is { } a =>
+                    () => Celebrations.Banner(_main, "Achievement unlocked · +50 XP", a.Title, a.Description, "medal"),
+                "objective" when s.Objectives.FirstOrDefault(o => o.Id == parts[1]) is { } o =>
+                    () => Celebrations.Banner(_main, $"Objective complete · {new string('★', o.Stars)} · +{o.Stars * 100} XP", o.Title, o.Description, "check-circle"),
+                "failed" when s.Objectives.FirstOrDefault(o => o.Id == parts[1]) is { } o =>
+                    () => _main.Toast($"Objective missed: {o.Title}", Palette.Danger),
+                "rank" => () => Celebrations.Banner(_main, "Your standing has grown", ProgressionEngine.Ranks[int.Parse(parts[1]) - 1].Title, $"You've reached level {parts[1]}. Your executives notice.", "lightning"),
+                "report" when s.Career.ReportCards.FirstOrDefault(r => r.Id == parts[1]) is { } r => () => ShowReportCard(r),
+                _ => null,
+            };
+            if (show == null) continue;
+            if (delay == 0) show();
+            else GetTree().CreateTimer(delay).Timeout += show;
+            if (parts[0] is "achievement" or "objective" or "rank") delay += 3.8; // banners take turns; toasts and the report card don't wait
+        }
+    }
+
+    public void ShowReportCard(QuarterReport r)
+    {
+        r.Seen = true;
+        Celebrations.ReportCard(_main, r, Session.State, null);
     }
 
     private void SetBadge(string nav, int count)
@@ -388,12 +462,15 @@ public partial class GameScreen : Control
         if (Meeting.HasPendingConfirmation) { _main.Toast("Confirm or cancel the pending decision in the meeting first.", Palette.Warning); return; }
         _advancing = true;
         foreach (var b in _timeButtons) b.Disabled = true;
-        animate &= !Motion.Reduced && maxDays > 1;
+        var office = (OfficeView)_views["Office"];
+        bool onOffice = _current == "Office";
+        animate &= !Motion.Reduced && (maxDays > 1 || onOffice);
         if (animate) { _timeStrip.Value = 0; _timeStrip.Modulate = Colors.White; }
         var got = new List<InboxMessage>();
         string? stopReason = null;
         int days = 0;
-        double perDay = Math.Clamp(0.7 / maxDays, 0.012, 0.06);
+        double perDay = maxDays == 1 ? (onOffice ? 1.6 : 0) : Math.Clamp((onOffice ? 1.8 : 0.7) / maxDays, 0.012, onOffice ? 0.26 : 0.06);
+        float startPhase = office.Scene.DayPhase;
         try
         {
             while (days < maxDays && Session.State.Outcome == GameOutcome.InProgress)
@@ -405,6 +482,14 @@ public partial class GameScreen : Control
                 if (animate)
                 {
                     _timeStrip.Value = days / (double)maxDays;
+                    if (onOffice)
+                    {
+                        // Sweep the sky smoothly: a full day per day for short advances, a quarter per day for long ones.
+                        office.Scene.State = Session.State;
+                        // One full evening → night → morning cycle across the whole advance, however long.
+                        float from = startPhase + (days - 1) / (float)maxDays, to = startPhase + days / (float)maxDays;
+                        office.Scene.CreateTween().TweenMethod(Callable.From<float>(v => office.Scene.DayPhase = v), from, to, perDay);
+                    }
                     await ToSignal(GetTree().CreateTimer(perDay), SceneTreeTimer.SignalName.Timeout);
                 }
                 var urgent = msgs.FirstOrDefault(IsUrgent);
@@ -418,6 +503,7 @@ public partial class GameScreen : Control
             _advancing = false;
             foreach (var b in _timeButtons) b.Disabled = false;
             if (animate) _timeStrip.CreateTween().TweenProperty(_timeStrip, "modulate:a", 0.0, 0.25);
+            if (onOffice) office.Scene.DayPhase = startPhase; // settle back to the resting light
             if (saved && !Motion.Reduced) { var t = _saved.CreateTween(); t.TweenProperty(_saved, "modulate:a", 1.0, 0.15); t.TweenInterval(1.2); t.TweenProperty(_saved, "modulate:a", 0.0, 0.3); }
         }
 
@@ -428,7 +514,7 @@ public partial class GameScreen : Control
         string text = stopReason ?? (got.Count == 0 ? $"{days} day{(days == 1 ? "" : "s")} passed. Nothing new." : $"{days} day{(days == 1 ? "" : "s")} passed · {got.Count} new message{(got.Count == 1 ? "" : "s")}");
         _main.Toast(text, got.Any(m => m.Kind == MessageKind.Incident) ? Palette.Danger : urgentMsg != null ? Palette.Warning : Palette.Accent);
         if (got.Any(m => m.Kind == MessageKind.Incident)) OpenInbox(got.First(m => m.Kind == MessageKind.Incident).Id);
-        else if (got.Count > 0 && _current == "Dashboard") RefreshAll();
+        else RefreshAll();
     }
 
     public void DismissDigest() { Digest.Clear(); RefreshAll(); }

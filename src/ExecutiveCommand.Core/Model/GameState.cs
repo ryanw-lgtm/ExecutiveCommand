@@ -47,6 +47,8 @@ public sealed class GameState
     public List<ScheduledEvent> Schedule { get; set; } = new();
     /// <summary>Month-end snapshots of headline metrics, for trends and sparklines. Older saves start empty.</summary>
     public List<MetricSnapshot> History { get; set; } = new();
+    public List<Objective> Objectives { get; set; } = new();
+    public CareerProgress Career { get; set; } = new();
 
     public string NewId(string prefix) => $"{prefix}-{NextId++:D4}";
 

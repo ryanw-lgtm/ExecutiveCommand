@@ -50,6 +50,17 @@ public partial class Main : Control
     public void ShowSaveLoad(bool fromGame) => Show(new SaveLoadScreen(this, fromGame));
 
     private readonly List<Control> _toasts = new();
+    public IReadOnlyList<Control> ActiveToasts => _toasts;
+    private readonly Dictionary<Control, Tween> _toastMoves = new();
+
+    /// <summary>One movement tween per toast: a new layout cancels the old one so they never fight.</summary>
+    private Tween MoveTween(Control t)
+    {
+        if (_toastMoves.TryGetValue(t, out var old) && old.IsValid()) old.Kill();
+        var tw = t.CreateTween().SetParallel().SetEase(Tween.EaseType.Out).SetTrans(Tween.TransitionType.Cubic);
+        _toastMoves[t] = tw;
+        return tw;
+    }
     private const float ToastWidth = 440, ToastGap = 10, ToastMargin = 24;
 
     /// <summary>Toasts stack in the bottom-right, slide in, and reflow as older ones leave (max 4 visible).</summary>
@@ -89,13 +100,13 @@ public partial class Main : Control
                 t.Modulate = new Color(1, 1, 1, Motion.Reduced ? 1 : 0);
                 if (!Motion.Reduced)
                 {
-                    var tw = t.CreateTween().SetParallel().SetEase(Tween.EaseType.Out).SetTrans(Tween.TransitionType.Cubic);
+                    var tw = MoveTween(t);
                     tw.TweenProperty(t, "position", target, 0.22);
                     tw.TweenProperty(t, "modulate:a", 1.0, 0.18);
                 }
             }
             else if (Motion.Reduced) t.Position = target;
-            else t.CreateTween().SetEase(Tween.EaseType.Out).SetTrans(Tween.TransitionType.Cubic).TweenProperty(t, "position", target, 0.18);
+            else MoveTween(t).TweenProperty(t, "position", target, 0.18);
             y -= ToastGap;
         }
     }
@@ -103,6 +114,7 @@ public partial class Main : Control
     private void DismissToast(Control card)
     {
         if (!_toasts.Remove(card) || !IsInstanceValid(card)) return;
+        if (_toastMoves.Remove(card, out var mv) && mv.IsValid()) mv.Kill();
         if (Motion.Reduced) card.QueueFree();
         else
         {

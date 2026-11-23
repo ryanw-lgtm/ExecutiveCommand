@@ -62,6 +62,7 @@ public sealed class SimulationEngine
         decision.Summary = result.Summary;
         State.Decisions.Add(decision);
         DecisionEvaluator.ApplyInstitutionalEffects(this, decision);
+        ProgressionEngine.Update(this);
         CommitRng();
         return new ActionOutcome { Executed = true, Validation = ValidationResult.Ok(), DecisionId = decision.Id, Summary = result.Summary, Effects = result.Effects };
     }
@@ -98,7 +99,12 @@ public sealed class SimulationEngine
             FinancialEngine.MonthlyClose(this);
 
         if (d.AddDays(1).Month != d.Month && IsFiscalQuarterEnd(d))
-            PerformanceEngine.QuarterlyReview(this);
+        {
+            var start = State.Reviews.Count > 0 ? State.Reviews[^1].Date.AddDays(1) : State.StartDate;
+            var review = PerformanceEngine.QuarterlyReview(this);
+            ProgressionEngine.ReportCard(this, review, start);
+        }
+        ProgressionEngine.Update(this);
     }
 
     public bool IsFiscalQuarterEnd(DateOnly d)

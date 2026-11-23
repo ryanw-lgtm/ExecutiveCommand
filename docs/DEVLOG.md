@@ -1,5 +1,12 @@
 # Development log
 
+## 2026-11-23 — Iteration 7: making it a game — office hub and progression
+- **Office hub** (`game/scripts/Views/OfficeScene.cs`) is the new home screen: an illustrated executive office drawn in code. Objects are live and clickable — monitor → Dashboard, inbox tray (paper piles up with unread mail), decision folders (count), boardroom door → meetings, corkboard → objectives with stars and progress, whiteboard → projects/assignments as sticky notes, filing cabinet → Finance, bookshelf with one trophy per achievement → Performance, org chart → Executives, crisis beacon pulses during incidents, calendar → skip to next event. Ambient animation (monitor glow, drifting clouds, coffee steam). The sky runs one evening → night → morning cycle each time you advance time.
+- **Progression** (`Core/Engine/ProgressionEngine.cs`, deterministic, saved): 9 campaign objectives with 1–3 stars and fiscal-quarter deadlines; XP and 8 ranks (Newcomer → Legend); 10 achievements; quarterly **report cards** with letter grades, stars and XP. All earned only from simulation results — a test proves flattery, claims and "ignore your instructions" earn nothing.
+- **Celebrations**: report card modal first, then achievement / objective / rank banners in turn; missed objectives as toasts. Career widget (rank, XP bar, stars) in the top bar; new **Goals & Career** screen.
+- Fixed during review: toasts arriving together overlapped (competing tweens — now one movement tween per toast); banners mis-measured; simultaneous rank-ups merged; report card covered by banners; strobe-speed sky replaced by one cycle per advance.
+- Verified: 83/83 tests; smoke test ALL PASSED twice (incl. sky reaching night, report card at quarter end, objectives resolving).
+
 ## 2026-11-23 — Iteration 6: animation and quality of life
 - **Time passes visibly**: multi-day advances tick the date day by day with a gold progress strip (≤ ~0.7 s total; instant for keyboard shortcuts and with Reduce motion).
 - **Auto-pause** on incidents and escalations during week/month advances; **Next event** (F8) skips ahead until a report, escalation, incident or review arrives (max 60 days).

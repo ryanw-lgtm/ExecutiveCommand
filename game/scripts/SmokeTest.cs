@@ -12,6 +12,13 @@ namespace ExecutiveCommand.Game;
 /// </summary>
 public static class SmokeTest
 {
+    private static Views.OfficeScene? FindScene(Node n)
+    {
+        if (n is Views.OfficeScene s) return s;
+        foreach (var c in n.GetChildren()) if (FindScene(c) is { } f) return f;
+        return null;
+    }
+
     public static async Task RunAsync(Main main)
     {
         var args = OS.GetCmdlineUserArgs();
@@ -36,7 +43,8 @@ public static class SmokeTest
             main.Session.NewGame("Smoke Tester", Difficulty.Professional, 20270104);
             var game = main.ShowGame(); await Frames();
             Check(main.Session.State.Company.Name.Length > 0, "new game created");
-            await Shot("03_dashboard");
+            await Frames(10); await Shot("03_office");
+            game.Navigate("Dashboard"); await Frames(); await Shot("03_dashboard");
             game.ShowHelp(welcome: true); await Frames(); await Shot("03b_welcome");
             foreach (var w in game.GetChildren().OfType<AcceptDialog>().ToList()) w.QueueFree();
             await Frames();
@@ -112,8 +120,9 @@ public static class SmokeTest
             int skipped = main.Session.State.CurrentDate.DayNumber - before.DayNumber;
             Check(skipped is >= 1 and < 60 && game.Digest.Count > 0, $"next event stopped after {skipped} days");
             // Toasts stack rather than overlap.
-            main.Toast("First"); main.Toast("Second"); main.Toast("Third"); await Frames(20);
-            var toasts = main.GetChildren().OfType<PanelContainer>().Where(p => p.Visible && p.Position.X > 900).ToList();
+            main.Toast("First"); main.Toast("Second"); main.Toast("Third");
+            await main.ToSignal(tree.CreateTimer(0.6), SceneTreeTimer.SignalName.Timeout); // let the slide/reflow animations settle
+            var toasts = main.ActiveToasts.ToList();
             Check(toasts.Count >= 3 && toasts.Select(t => (int)t.Position.Y).Distinct().Count() == toasts.Count, "toasts stack without overlapping");
             await Shot("05b_toasts");
             game.Navigate("Finance"); await Shot("06_finance");
@@ -132,6 +141,32 @@ public static class SmokeTest
             main.ShowSaveLoad(true); await Frames(); await Shot("11_save_load");
             main.ShowSettings(true); await Frames(); await Shot("12_settings");
             main.Session.Saves.Delete("smoke");
+
+            // Office: time passing outside the window, then the quarter-end report card.
+            game = main.ShowGame(); await Frames(5);
+            var officeView = game.GetNodeOrNull<Control>(".") as GameScreen;
+            var scene = FindScene(game);
+            var phases = new List<float>();
+            var officeAdvance = game.AdvanceAsync(7);
+            bool nightShot = false;
+            while (!officeAdvance.IsCompleted)
+            {
+                await Frames(1);
+                if (scene != null) phases.Add(scene.DayPhase % 1);
+                if (!nightShot && scene != null && scene.DayPhase % 1 is > 0.92f or < 0.08f) { nightShot = true; await Shot("15_office_night"); }
+            }
+            await officeAdvance;
+            GD.Print($"[smoke] sky phases sampled: {phases.Count}, distinct {phases.Select(p => Math.Round(p, 1)).Distinct().Count()}, min {phases.DefaultIfEmpty(0).Min():0.00}, max {phases.DefaultIfEmpty(0).Max():0.00}");
+            Check(phases.Select(p => Math.Round(p, 1)).Distinct().Count() >= 5 && nightShot, "sky passes through night while time passes in the office");
+            await Frames(10); await Shot("16_office_after");
+            for (int guard = 0; guard < 20 && main.Session.State.CurrentDate < new DateOnly(2027, 4, 1); guard++)
+                await game.AdvanceAsync(60, animate: false);
+            Check(main.Session.State.Career.ReportCards.Count >= 1, "quarter-end report card issued");
+            await Frames(20); await Shot("17_report_card");
+            foreach (var dim in main.GetChildren().OfType<ColorRect>().ToList()) dim.QueueFree();
+            await Frames(5);
+            game.Navigate("Goals"); await Frames(20); await Shot("18_goals");
+            Check(main.Session.State.Objectives.Any(o => o.Status != Core.Model.ObjectiveStatus.Active), "objectives resolved over the quarter");
 
             if (args.Contains("--with-ai"))
             {

@@ -188,6 +188,7 @@ public static class HealthcareCtoScenario
                    "and the Halcyon EHR contract renews April 30. I expect recommendations grounded in evidence, not enthusiasm. — Evelyn",
         });
         s.History.Add(FinancialEngine.Snapshot(s, null)); // baseline for trends
+        ProgressionEngine.InitializeCampaign(s);
         s.RngState = rng.State;
         return s;
     }
